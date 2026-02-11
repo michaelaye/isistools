@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+.venv/
+venv/
+
+# Testing / linting
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Quarto output
+/.quarto/
+**/*.quarto_ipynb
+*_files/
+*.html
+_site/
+_freeze/
+
+# Bokeh / Panel / HoloViews artifacts
+.panel_cache/
+
+# Datashader / dask
+dask-worker-space/
+
+# ISIS data files (large binaries)
+*.cub
+*.net
+*.lis
+
+# Screenshots / test artifacts
+*.png
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Playwright
+.playwright-mcp/

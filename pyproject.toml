@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "isistools"
+version = "0.1.0"
+description = "Python-based review tools for ISIS3 coregistration workflows"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Michael Aye" },
+]
+dependencies = [
+    "geopandas>=0.14",
+    "holoviews>=1.18",
+    "hvplot>=0.9",
+    "datashader>=0.16",
+    "panel>=1.3",
+    "bokeh>=3.3",
+    "rioxarray>=0.15",
+    "xarray>=2024.1",
+    "plio>=1.5",
+    "pvl>=1.3",
+    "shapely>=2.0",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "typer>=0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+]
+
+[project.scripts]
+isistools = "isistools.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/isistools"]
+
+[tool.ruff]
+line-length = 99
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
