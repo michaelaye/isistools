@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "isistools"
-version = "0.1.1"
+dynamic = ["version"]
 description = "Python-based review tools for ISIS3 coregistration workflows"
 readme = "README.md"
 license = "MIT"
@@ -38,6 +38,9 @@ dev = [
 
 [project.scripts]
 isistools = "isistools.cli:app"
+
+[tool.hatch.version]
+path = "src/isistools/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/isistools"]

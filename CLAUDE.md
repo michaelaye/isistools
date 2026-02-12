@@ -49,9 +49,14 @@ The codebase follows a three-layer pattern: **I/O → Plotting → Apps**
 ### CLI (`cli.py`)
 Typer-based. Each command constructs an app object and calls `.serve()`. Entry point: `isistools = "isistools.cli:app"`.
 
+## Versioning
+
+Single source of truth: `__init__.py` defines `__version__`. `pyproject.toml` reads it dynamically via `[tool.hatch.version]`. **Only edit `__init__.py` when bumping versions.**
+
 ## Key Dependencies and Gotchas
 
-- **plio**: API is `from_isis(path)` and `to_isis(df, path)`. Older names like `read_network`/`write_network` do not exist.
+- **plio**: API is `from_isis(path)` and `to_isis(df, path)`. Older names like `read_network`/`write_network` do not exist. Plio columns are renamed in `load_cnet()`: `id`→`pointId`, `sampleResidual`→`residualSample`, `lineResidual`→`residualLine`.
+- **Serial numbers**: ISIS serial numbers (e.g., `MRO/CTX/0910464726:234`) use spacecraft clock counts, not product IDs. Match cubes via `SpacecraftClockCount` from the label's Instrument group.
 - **pvl**: ISIS labels are parsed as `PVLModule`. The `Polygon` object has `StartByte` (1-based) and `Bytes`.
 - **hvplot**: `active_tools` and `default_tools` are not valid parameters for hvplot plots — they produce warnings. Use Bokeh hooks or `legend_opts` instead.
 - **hvplot `by=` with `cmap=`**: Does not reliably apply fill/line colors to polygons. Use explicit per-group overlays with `fill_color`/`line_color` instead.
