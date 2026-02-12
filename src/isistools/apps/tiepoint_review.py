@@ -59,52 +59,7 @@ def _find_image_pairs(cnet_df: pd.DataFrame) -> list[tuple[str, str]]:
     return [pair for pair, count in sorted_pairs]
 
 
-def _build_serial_lookup(
-    cube_paths: list[Path],
-) -> dict[str, Path]:
-    """Build a mapping from control network serial numbers to cube paths.
-
-    Reads the SpacecraftClockCount from each cube label and matches it
-    against the clock count portion of ISIS serial numbers
-    (e.g., ``MRO/CTX/0910464726:234``).
-    """
-    import pvl
-
-    # Map clock count -> cube path
-    clock_to_path: dict[str, Path] = {}
-    for cp in cube_paths:
-        try:
-            label = pvl.load(str(cp))
-            inst = label["IsisCube"]["Instrument"]
-            clock = str(
-                inst.get("SpacecraftClockCount",
-                         inst.get("SpacecraftClockStartCount", ""))
-            )
-            if clock:
-                clock_to_path[clock] = cp
-        except Exception:
-            continue
-
-    return clock_to_path
-
-
-def _match_serials_to_cubes(
-    serial_numbers: list[str],
-    cube_paths: list[Path],
-) -> dict[str, Path]:
-    """Match serial numbers from a control network to cube file paths.
-
-    Returns a dict mapping serial number -> cube path.
-    """
-    clock_to_path = _build_serial_lookup(cube_paths)
-    result: dict[str, Path] = {}
-    for sn in serial_numbers:
-        # Serial numbers are like MRO/CTX/0910464726:234
-        # The clock count is the last segment
-        clock = sn.rsplit("/", 1)[-1]
-        if clock in clock_to_path:
-            result[sn] = clock_to_path[clock]
-    return result
+from isistools.io.cubes import build_serial_lookup, match_serials_to_cubes
 
 
 class TiepointReview:
@@ -143,7 +98,7 @@ class TiepointReview:
 
         # Find image pairs
         self._pairs = _find_image_pairs(self._cnet_df)
-        self._serial_to_path = _match_serials_to_cubes(
+        self._serial_to_path = match_serials_to_cubes(
             self._cnet_df["serialnumber"].unique().tolist(),
             self._cube_paths,
         )

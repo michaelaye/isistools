@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-02-12
+
+### Added
+
+- **Native matplotlib footprint viewer** (`--win` flag): lightweight alternative
+  to the browser-based Panel/Bokeh viewer. Launches a native window with
+  zoom/pan toolbar, hover tooltips showing CTX product ID, and a right-side
+  legend with per-filename colors.
+- **Precise campt coordinate conversion**: pre-jigsaw control networks without
+  ground coordinates are converted from sample/line to lon/lat using ISIS
+  `campt` in batch mode via kalasiris, providing camera-model-accurate positions.
+- Control point overlay on matplotlib footprint viewer: registered points shown
+  as black crosses, unregistered as red circles, ignored as gray circles.
+- Window centering support for Qt and Tk matplotlib backends.
+- New dependencies: `matplotlib`, `mplcursors`, `kalasiris`, `PyQt6`.
+
+### Changed
+
+- Serial lookup utilities (`build_serial_lookup`, `match_serials_to_cubes`)
+  moved from `apps.tiepoint_review` to `io.cubes` for reuse without heavy
+  imports.
+- Holoviews/hvplot/panel imports made lazy in `cnet_overlay.py` — the `--win`
+  path no longer loads browser-plotting machinery, fixing startup crashes and
+  improving load time.
+- `cnet_to_geodataframe()` now accepts optional `cube_paths` parameter for
+  campt-based coordinate conversion on level-1 networks.
+
+### Fixed
+
+- `NameError` in `mosaic_review.py` where `_build_serial_lookup` was called but
+  never imported.
+- `FileNotFoundError` on startup caused by `os.getcwd()` in `param` triggered
+  via transitive holoviews imports in the matplotlib code path.
+
 ## [0.1.1] - 2025-02-11
 
 ### Fixed
@@ -37,6 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Typer CLI with commands: `mosaic`, `tiepoints`, `footprints`,
   `cnet-info`.
 
-[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/michaelaye/isistools/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/michaelaye/isistools/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/michaelaye/isistools/releases/tag/v0.1.0

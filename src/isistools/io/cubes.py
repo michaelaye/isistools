@@ -107,6 +107,51 @@ def load_cube(cube_path: str | Path) -> xr.DataArray:
     return da
 
 
+def build_serial_lookup(
+    cube_paths: list[Path],
+) -> dict[str, Path]:
+    """Build a mapping from control network serial numbers to cube paths.
+
+    Reads the SpacecraftClockCount from each cube label and matches it
+    against the clock count portion of ISIS serial numbers
+    (e.g., ``MRO/CTX/0910464726:234``).
+    """
+    clock_to_path: dict[str, Path] = {}
+    for cp in cube_paths:
+        try:
+            label = pvl.load(str(cp))
+            inst = label["IsisCube"]["Instrument"]
+            clock = str(
+                inst.get("SpacecraftClockCount",
+                         inst.get("SpacecraftClockStartCount", ""))
+            )
+            if clock:
+                clock_to_path[clock] = cp
+        except Exception:
+            continue
+
+    return clock_to_path
+
+
+def match_serials_to_cubes(
+    serial_numbers: list[str],
+    cube_paths: list[Path],
+) -> dict[str, Path]:
+    """Match serial numbers from a control network to cube file paths.
+
+    Returns a dict mapping serial number -> cube path.
+    """
+    clock_to_path = build_serial_lookup(cube_paths)
+    result: dict[str, Path] = {}
+    for sn in serial_numbers:
+        # Serial numbers are like MRO/CTX/0910464726:234
+        # The clock count is the last segment
+        clock = sn.rsplit("/", 1)[-1]
+        if clock in clock_to_path:
+            result[sn] = clock_to_path[clock]
+    return result
+
+
 def get_serial_number(label: pvl.PVLModule) -> str:
     """Construct a serial number proxy from label metadata.
 

@@ -10,8 +10,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import geopandas as gpd
-import holoviews as hv
-import hvplot.pandas  # noqa: F401
 import numpy as np
 import pandas as pd
 from shapely.geometry import Point
@@ -19,9 +17,7 @@ from shapely.geometry import Point
 from isistools.plotting.styles import CNET_POINT_STYLES, STATUS_COLOR_MAP
 
 if TYPE_CHECKING:
-    pass
-
-hv.extension("bokeh")
+    import holoviews as hv
 
 
 def cnet_points_image(
@@ -46,6 +42,11 @@ def cnet_points_image(
     holoviews.Element
         Scatter overlay in sample/line coordinates.
     """
+    import holoviews as hv
+    import hvplot.pandas  # noqa: F401
+
+    hv.extension("bokeh")
+
     df = cnet_df.copy()
 
     if serial_number is not None:
@@ -107,6 +108,11 @@ def cnet_points_map(
     holoviews.Element
         Points overlay for map plots.
     """
+    import holoviews as hv
+    import hvplot.pandas  # noqa: F401
+
+    hv.extension("bokeh")
+
     if hover_cols is None:
         hover_cols = [c for c in ["pointId", "status", "residual_magnitude",
                                    "n_measures"]
@@ -140,50 +146,165 @@ def cnet_points_map(
     return result
 
 
-def cnet_to_geodataframe(cnet_df: pd.DataFrame) -> gpd.GeoDataFrame:
+def _has_ground_coords(cnet_df: pd.DataFrame) -> bool:
+    """Check if the control network has non-zero ground coordinates."""
+    for col in ["adjustedX", "adjustedLon", "aprioriX", "aprioriLon"]:
+        if col in cnet_df.columns and (cnet_df[col] != 0).any():
+            return True
+    return False
+
+
+def _lonlat_from_campt(
+    cnet_df: pd.DataFrame,
+    cube_paths: list,
+) -> pd.DataFrame:
+    """Convert sample/line to lon/lat using ISIS campt via kalasiris.
+
+    For each serial number matched to a cube, writes a coordinate list
+    and calls ``campt`` in batch mode to get precise lon/lat from the
+    camera model.
+
+    Returns a copy of cnet_df with ``campt_lon`` and ``campt_lat`` columns.
+
+    Raises
+    ------
+    RuntimeError
+        If campt fails for all cubes (e.g. missing ISIS installation).
+    """
+    import csv
+    import os
+    import tempfile
+    from pathlib import Path
+
+    import kalasiris as isis
+
+    from isistools.io.cubes import build_serial_lookup
+
+    # Use full user environment so ISIS binaries find all required libraries
+    isis.environ = os.environ.copy()
+
+    clock_lookup = build_serial_lookup([Path(p) for p in cube_paths])
+
+    df = cnet_df.copy()
+    df["campt_lon"] = np.nan
+    df["campt_lat"] = np.nan
+
+    n_success = 0
+    for sn in df["serialnumber"].unique():
+        clock = sn.rsplit("/", 1)[-1]
+        if clock not in clock_lookup:
+            continue
+        cube_path = clock_lookup[clock]
+        mask = df["serialnumber"] == sn
+        measures = df.loc[mask, ["sample", "line"]]
+        if measures.empty:
+            continue
+
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".csv", delete=False
+            ) as coord_f:
+                coord_path = coord_f.name
+                for _, row in measures.iterrows():
+                    coord_f.write(f"{row['sample']},{row['line']}\n")
+
+            out_path = coord_path + ".out.csv"
+            isis.campt(
+                from_=str(cube_path),
+                usecoordlist="true",
+                coordlist=coord_path,
+                coordtype="image",
+                format="flat",
+                append="false",
+                to=out_path,
+            )
+
+            # Parse flat CSV output
+            with open(out_path) as f:
+                reader = csv.DictReader(f)
+                lons = []
+                lats = []
+                for row in reader:
+                    lats.append(float(row["PlanetocentricLatitude"]))
+                    lons.append(float(row["PositiveEast360Longitude"]))
+
+            if len(lons) == mask.sum():
+                df.loc[mask, "campt_lon"] = lons
+                df.loc[mask, "campt_lat"] = lats
+                n_success += 1
+
+        except Exception:
+            continue
+        finally:
+            for p in [coord_path, out_path]:
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+
+    if n_success == 0:
+        raise RuntimeError("campt failed for all cubes")
+
+    return df
+
+
+def cnet_to_geodataframe(
+    cnet_df: pd.DataFrame,
+    cube_paths: list | None = None,
+) -> gpd.GeoDataFrame:
     """Convert a control network DataFrame to a GeoDataFrame.
 
-    Groups measures by point, takes the average adjusted lat/lon
-    (or apriori if adjusted is not available), and creates point
-    geometries.
+    Groups measures by point and creates point geometries. Uses adjusted
+    or apriori body-fixed coordinates when available. For pre-jigsaw
+    networks without ground coordinates, uses ISIS ``campt`` via
+    kalasiris for precise camera-model conversion.
 
     Parameters
     ----------
     cnet_df : pd.DataFrame
         Control network with one row per measure.
+    cube_paths : list, optional
+        Cube file paths. Required for footprint-based approximation
+        when the network has no ground coordinates.
 
     Returns
     -------
     gpd.GeoDataFrame
         One row per control point with lon/lat geometry.
     """
-    # Group by point to get per-point info
-    lon_col = None
-    lat_col = None
+    needs_conversion = not _has_ground_coords(cnet_df) and cube_paths is not None
 
-    # Try adjusted coordinates first, fall back to apriori
-    for lon_candidate in ["adjustedX", "adjustedLon", "aprioriX", "aprioriLon"]:
-        if lon_candidate in cnet_df.columns:
-            lon_col = lon_candidate
-            break
-    for lat_candidate in ["adjustedY", "adjustedLat", "aprioriY", "aprioriLat"]:
-        if lat_candidate in cnet_df.columns:
-            lat_col = lat_candidate
-            break
+    if needs_conversion:
+        cnet_df = _lonlat_from_campt(cnet_df, cube_paths)
+        lon_col, lat_col = "campt_lon", "campt_lat"
+    else:
+        lon_col = None
+        lat_col = None
+        for lon_candidate in ["adjustedX", "adjustedLon", "aprioriX", "aprioriLon"]:
+            if lon_candidate in cnet_df.columns:
+                lon_col = lon_candidate
+                break
+        for lat_candidate in ["adjustedY", "adjustedLat", "aprioriY", "aprioriLat"]:
+            if lat_candidate in cnet_df.columns:
+                lat_col = lat_candidate
+                break
 
-    if lon_col is None or lat_col is None:
-        raise ValueError(
-            "Cannot find longitude/latitude columns in control network. "
-            f"Available columns: {list(cnet_df.columns)}"
-        )
+        if lon_col is None or lat_col is None:
+            raise ValueError(
+                "Cannot find longitude/latitude columns in control network. "
+                f"Available columns: {list(cnet_df.columns)}"
+            )
 
     # Aggregate per point
     point_groups = cnet_df.groupby("pointId")
 
     records = []
     for point_id, group in point_groups:
-        lon = group[lon_col].iloc[0]
-        lat = group[lat_col].iloc[0]
+        lon = group[lon_col].mean()
+        lat = group[lat_col].mean()
+
+        if np.isnan(lon) or np.isnan(lat):
+            continue
 
         # Determine overall point status
         statuses = group["status"].unique()
@@ -202,6 +323,13 @@ def cnet_to_geodataframe(cnet_df: pd.DataFrame) -> gpd.GeoDataFrame:
             "residual_magnitude": group["residual_magnitude"].mean(),
             "pointType": group.get("pointType", pd.Series("Unknown")).iloc[0],
         })
+
+    if not records:
+        return gpd.GeoDataFrame(
+            columns=["pointId", "geometry", "status", "n_measures",
+                     "residual_magnitude", "pointType"],
+            geometry="geometry", crs="EPSG:4326",
+        )
 
     gdf = gpd.GeoDataFrame(records, geometry="geometry", crs="EPSG:4326")
     return gdf
@@ -228,6 +356,8 @@ def cnet_residual_vectors(
     holoviews.Element
         Vectorfield or segments overlay.
     """
+    import holoviews as hv
+
     df = cnet_df.copy()
     if serial_number is not None:
         df = df[df["serialnumber"] == serial_number]

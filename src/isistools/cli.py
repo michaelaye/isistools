@@ -71,30 +71,46 @@ def footprints(
     cnet: Optional[Path] = typer.Option(
         None, "--cnet", "-c", help="Optional control network overlay",
     ),
+    win: bool = typer.Option(
+        False, "--win", help="Native matplotlib window instead of browser",
+    ),
     port: int = typer.Option(0, "--port", "-p", help="Server port (0=auto)"),
     no_browser: bool = typer.Option(False, "--no-browser", help="Don't open browser"),
 ):
     """Quick footprint map viewer."""
-    import panel as pn
-
     from isistools.io.footprints import load_footprints
-    from isistools.plotting.footprint_map import footprint_map, footprint_map_with_cnet
 
     typer.echo(f"Loading footprints from {cubelist}...")
     gdf = load_footprints(cubelist)
     typer.echo(f"Loaded {len(gdf)} footprints")
 
+    cnet_df = None
     if cnet is not None:
         from isistools.io.controlnet import load_cnet
-        from isistools.plotting.cnet_overlay import cnet_to_geodataframe
 
         cnet_df = load_cnet(cnet)
-        cnet_gdf = cnet_to_geodataframe(cnet_df)
-        plot = footprint_map_with_cnet(gdf, cnet_gdf)
-    else:
-        plot = footprint_map(gdf)
 
-    pn.serve(pn.pane.HoloViews(plot), port=port, show=not no_browser, title="Footprints")
+    if win:
+        from isistools.plotting.footprint_mpl import footprint_window
+
+        footprint_window(gdf, cnet_df=cnet_df)
+    else:
+        import panel as pn
+
+        from isistools.plotting.footprint_map import footprint_map, footprint_map_with_cnet
+
+        if cnet_df is not None:
+            from isistools.plotting.cnet_overlay import cnet_to_geodataframe
+
+            cube_paths = gdf["path"].tolist() if "path" in gdf.columns else None
+            cnet_gdf = cnet_to_geodataframe(cnet_df, cube_paths=cube_paths)
+            plot = footprint_map_with_cnet(gdf, cnet_gdf)
+        else:
+            plot = footprint_map(gdf)
+
+        pn.serve(
+            pn.pane.HoloViews(plot), port=port, show=not no_browser, title="Footprints",
+        )
 
 
 @app.command()

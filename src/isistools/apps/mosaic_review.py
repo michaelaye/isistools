@@ -20,7 +20,7 @@ import panel as pn
 
 from isistools.apps.components import CnetInfoPanel, CnetSelector, CubeListSelector
 from isistools.io.controlnet import load_cnet
-from isistools.io.cubes import load_cube, read_label
+from isistools.io.cubes import build_serial_lookup, load_cube, read_label
 from isistools.io.footprints import load_footprints, read_cube_list
 from isistools.plotting.cnet_overlay import cnet_to_geodataframe
 from isistools.plotting.footprint_map import footprint_map, footprint_map_with_cnet
@@ -118,7 +118,8 @@ class MosaicReview:
         """Load control network at init time."""
         try:
             self._cnet_df = load_cnet(cnet_path)
-            self._cnet_gdf = cnet_to_geodataframe(self._cnet_df)
+            cube_paths = [str(p) for p in self._cube_paths] or None
+            self._cnet_gdf = cnet_to_geodataframe(self._cnet_df, cube_paths=cube_paths)
             self._cnet_info.update(self._cnet_df)
             self._update_map()
         except Exception as e:
@@ -134,7 +135,8 @@ class MosaicReview:
     def _on_cnet_loaded(self, cnet_df):
         """Callback when control network is loaded via widget."""
         self._cnet_df = cnet_df
-        self._cnet_gdf = cnet_to_geodataframe(cnet_df)
+        cube_paths = [str(p) for p in self._cube_paths] or None
+        self._cnet_gdf = cnet_to_geodataframe(cnet_df, cube_paths=cube_paths)
         self._cnet_info.update(cnet_df)
         self._update_map()
 
@@ -167,7 +169,7 @@ class MosaicReview:
             da = load_cube(cube_path)
             if self._cnet_df is not None:
                 # Match via spacecraft clock count
-                clock_lookup = _build_serial_lookup([cube_path])
+                clock_lookup = build_serial_lookup([cube_path])
                 label = read_label(cube_path)
                 inst = label["IsisCube"]["Instrument"]
                 clock = str(

@@ -27,6 +27,10 @@ dependencies = [
     "numpy>=1.24",
     "pandas>=2.0",
     "typer>=0.9",
+    "matplotlib>=3.7",
+    "mplcursors>=0.5",
+    "kalasiris>=1.11",
+    "PyQt6>=6.5",
 ]
 
 [project.optional-dependencies]
