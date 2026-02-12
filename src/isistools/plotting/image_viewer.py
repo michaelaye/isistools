@@ -72,6 +72,17 @@ def image_plot(
     # Compute contrast limits from a subsample for performance
     clim = _compute_clim(da, percentile_stretch)
 
+    def _deduplicate_tools(plot, element):
+        """Remove duplicate toolbar buttons added by Bokeh defaults."""
+        seen = set()
+        unique = []
+        for tool in plot.state.toolbar.tools:
+            name = type(tool).__name__
+            if name not in seen:
+                seen.add(name)
+                unique.append(tool)
+        plot.state.toolbar.tools = unique
+
     plot_kwargs = dict(
         rasterize=rasterize,
         cmap=cmap,
@@ -86,7 +97,7 @@ def image_plot(
         plot_kwargs["width"] = width
         plot_kwargs["height"] = height
 
-    return da.hvplot.image(**plot_kwargs)
+    return da.hvplot.image(**plot_kwargs).opts(hooks=[_deduplicate_tools])
 
 
 def image_pair_plot(

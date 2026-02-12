@@ -71,6 +71,13 @@ def load_cnet(path: str | Path) -> pd.DataFrame:
 
     df = from_isis(str(path))
 
+    # Normalize plio column names to isistools conventions
+    df = df.rename(columns={
+        "id": "pointId",
+        "sampleResidual": "residualSample",
+        "lineResidual": "residualLine",
+    })
+
     # Add residual magnitude
     res_s = df.get("residualSample", pd.Series(0.0, index=df.index))
     res_l = df.get("residualLine", pd.Series(0.0, index=df.index))

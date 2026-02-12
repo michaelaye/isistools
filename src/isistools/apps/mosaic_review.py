@@ -166,18 +166,21 @@ class MosaicReview:
         try:
             da = load_cube(cube_path)
             if self._cnet_df is not None:
-                # Try to find matching serial number
+                # Match via spacecraft clock count
+                clock_lookup = _build_serial_lookup([cube_path])
                 label = read_label(cube_path)
-                from isistools.io.cubes import get_serial_number
-                sn = get_serial_number(label)
-                # Check if any measures match this serial number pattern
-                matching = self._cnet_df[
-                    self._cnet_df["serialnumber"].str.contains(
-                        cube_path.stem, case=False, na=False
-                    )
+                inst = label["IsisCube"]["Instrument"]
+                clock = str(
+                    inst.get("SpacecraftClockCount",
+                             inst.get("SpacecraftClockStartCount", ""))
+                )
+                # Find the serial number that contains this clock count
+                matching = [
+                    sn for sn in self._cnet_df["serialnumber"].unique()
+                    if clock and clock in sn
                 ]
-                if not matching.empty:
-                    sn = matching["serialnumber"].iloc[0]
+                if matching:
+                    sn = matching[0]
                     self._image_pane.object = image_with_cnet(da, self._cnet_df, serial_number=sn)
                 else:
                     self._image_pane.object = image_plot(da)
