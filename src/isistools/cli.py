@@ -123,7 +123,16 @@ def footprints(
             from isistools.plotting.cnet_overlay import cnet_to_geodataframe
 
             cube_paths = gdf["path"].tolist() if "path" in gdf.columns else None
-            cnet_gdf = cnet_to_geodataframe(cnet_df, cube_paths=cube_paths)
+            clock_lookup = None
+            if "clock" in gdf.columns and "path" in gdf.columns:
+                clock_lookup = {
+                    row["clock"]: Path(row["path"])
+                    for _, row in gdf[["clock", "path"]].iterrows()
+                    if row["clock"]
+                }
+            cnet_gdf = cnet_to_geodataframe(
+                cnet_df, cube_paths=cube_paths, clock_lookup=clock_lookup,
+            )
             plot = footprint_map_with_cnet(gdf, cnet_gdf)
         else:
             plot = footprint_map(gdf)

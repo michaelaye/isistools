@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2025-02-12
+
+### Changed
+
+- **Eliminated triple PVL parsing**: cube labels are now parsed once in
+  `load_footprints()` and reused for footprint extraction and serial lookup.
+  `read_footprint()` accepts an optional pre-parsed `label` parameter.
+  `load_footprints()` now extracts `SpacecraftClockCount` during the single
+  parse, stored in the `clock` column of the GeoDataFrame.
+- **Parallelized campt calls**: `_lonlat_from_campt()` now runs all per-cube
+  campt subprocess calls concurrently via `ThreadPoolExecutor`. With N cubes,
+  coordinate conversion is roughly N times faster.
+- `cnet_to_geodataframe()` accepts optional `clock_lookup` dict to skip
+  rebuilding the serial-number-to-cube mapping from labels.
+
 ## [0.2.1] - 2025-02-12
 
 ### Changed
@@ -93,7 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Typer CLI with commands: `mosaic`, `tiepoints`, `footprints`,
   `cnet-info`.
 
-[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/michaelaye/isistools/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/michaelaye/isistools/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/michaelaye/isistools/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/michaelaye/isistools/compare/v0.1.0...v0.1.1

@@ -106,10 +106,22 @@ def footprint_window(
 
     # -- Control point overlay --
     if cnet_df is not None:
+        from pathlib import Path
+
         from isistools.plotting.cnet_overlay import cnet_to_geodataframe
 
         cube_paths = gdf["path"].tolist() if "path" in gdf.columns else None
-        cnet_gdf = cnet_to_geodataframe(cnet_df, cube_paths=cube_paths)
+        # Reuse clock counts already extracted during load_footprints
+        clock_lookup = None
+        if "clock" in gdf.columns and "path" in gdf.columns:
+            clock_lookup = {
+                row["clock"]: Path(row["path"])
+                for _, row in gdf[["clock", "path"]].iterrows()
+                if row["clock"]
+            }
+        cnet_gdf = cnet_to_geodataframe(
+            cnet_df, cube_paths=cube_paths, clock_lookup=clock_lookup,
+        )
         _cnet_mpl_styles = {
             "registered": {"color": "black", "marker": "x", "markersize": 16, "alpha": 0.9},
             "unregistered": {"color": "#e74c3c", "marker": "o", "markersize": 4, "alpha": 0.7},

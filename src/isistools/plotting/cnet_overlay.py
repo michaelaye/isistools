@@ -159,15 +159,65 @@ def _has_ground_coords(cnet_df: pd.DataFrame) -> bool:
     return False
 
 
+def _campt_one_serial(cube_path, samples, lines):
+    """Run campt for one cube and return (lons, lats) or None on failure."""
+    import csv
+    import os
+    import tempfile
+
+    import kalasiris as isis
+
+    isis.environ = os.environ.copy()
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False
+        ) as coord_f:
+            coord_path = coord_f.name
+            for s, l in zip(samples, lines):
+                coord_f.write(f"{s},{l}\n")
+
+        out_path = coord_path + ".out.csv"
+        isis.campt(
+            from_=str(cube_path),
+            usecoordlist="true",
+            coordlist=coord_path,
+            coordtype="image",
+            format="flat",
+            append="false",
+            to=out_path,
+        )
+
+        with open(out_path) as f:
+            reader = csv.DictReader(f)
+            lons = []
+            lats = []
+            for row in reader:
+                lats.append(float(row["PlanetocentricLatitude"]))
+                lons.append(float(row["PositiveEast360Longitude"]))
+
+        if len(lons) == len(samples):
+            return lons, lats
+    except Exception:
+        pass
+    finally:
+        for p in [coord_path, out_path]:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+    return None
+
+
 def _lonlat_from_campt(
     cnet_df: pd.DataFrame,
     cube_paths: list,
+    clock_lookup: dict | None = None,
 ) -> pd.DataFrame:
     """Convert sample/line to lon/lat using ISIS campt via kalasiris.
 
-    For each serial number matched to a cube, writes a coordinate list
-    and calls ``campt`` in batch mode to get precise lon/lat from the
-    camera model.
+    Runs campt calls in parallel using a thread pool (I/O-bound subprocess
+    work benefits from threads, not processes).
 
     Returns a copy of cnet_df with ``campt_lon`` and ``campt_lat`` columns.
 
@@ -176,25 +226,20 @@ def _lonlat_from_campt(
     RuntimeError
         If campt fails for all cubes (e.g. missing ISIS installation).
     """
-    import csv
     import os
-    import tempfile
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from pathlib import Path
 
-    import kalasiris as isis
-
-    from isistools.io.cubes import build_serial_lookup
-
-    # Use full user environment so ISIS binaries find all required libraries
-    isis.environ = os.environ.copy()
-
-    clock_lookup = build_serial_lookup([Path(p) for p in cube_paths])
+    if clock_lookup is None:
+        from isistools.io.cubes import build_serial_lookup
+        clock_lookup = build_serial_lookup([Path(p) for p in cube_paths])
 
     df = cnet_df.copy()
     df["campt_lon"] = np.nan
     df["campt_lat"] = np.nan
 
-    n_success = 0
+    # Build work items: (serial_number, cube_path, samples, lines, mask)
+    work = []
     for sn in df["serialnumber"].unique():
         clock = sn.rsplit("/", 1)[-1]
         if clock not in clock_lookup:
@@ -204,48 +249,25 @@ def _lonlat_from_campt(
         measures = df.loc[mask, ["sample", "line"]]
         if measures.empty:
             continue
+        work.append((sn, cube_path, measures["sample"].tolist(),
+                      measures["line"].tolist(), mask))
 
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".csv", delete=False
-            ) as coord_f:
-                coord_path = coord_f.name
-                for _, row in measures.iterrows():
-                    coord_f.write(f"{row['sample']},{row['line']}\n")
+    n_workers = min(len(work), os.cpu_count() or 4)
+    n_success = 0
 
-            out_path = coord_path + ".out.csv"
-            isis.campt(
-                from_=str(cube_path),
-                usecoordlist="true",
-                coordlist=coord_path,
-                coordtype="image",
-                format="flat",
-                append="false",
-                to=out_path,
-            )
-
-            # Parse flat CSV output
-            with open(out_path) as f:
-                reader = csv.DictReader(f)
-                lons = []
-                lats = []
-                for row in reader:
-                    lats.append(float(row["PlanetocentricLatitude"]))
-                    lons.append(float(row["PositiveEast360Longitude"]))
-
-            if len(lons) == mask.sum():
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        futures = {
+            pool.submit(_campt_one_serial, cube_path, samples, lines): (sn, mask)
+            for sn, cube_path, samples, lines, mask in work
+        }
+        for future in as_completed(futures):
+            sn, mask = futures[future]
+            result = future.result()
+            if result is not None:
+                lons, lats = result
                 df.loc[mask, "campt_lon"] = lons
                 df.loc[mask, "campt_lat"] = lats
                 n_success += 1
-
-        except Exception:
-            continue
-        finally:
-            for p in [coord_path, out_path]:
-                try:
-                    os.unlink(p)
-                except OSError:
-                    pass
 
     if n_success == 0:
         raise RuntimeError("campt failed for all cubes")
@@ -256,6 +278,7 @@ def _lonlat_from_campt(
 def cnet_to_geodataframe(
     cnet_df: pd.DataFrame,
     cube_paths: list | None = None,
+    clock_lookup: dict | None = None,
 ) -> gpd.GeoDataFrame:
     """Convert a control network DataFrame to a GeoDataFrame.
 
@@ -269,8 +292,11 @@ def cnet_to_geodataframe(
     cnet_df : pd.DataFrame
         Control network with one row per measure.
     cube_paths : list, optional
-        Cube file paths. Required for footprint-based approximation
-        when the network has no ground coordinates.
+        Cube file paths. Required when the network has no ground
+        coordinates (pre-jigsaw).
+    clock_lookup : dict, optional
+        Pre-built clock-count → cube-path mapping. When provided,
+        avoids re-parsing cube labels to build the serial lookup.
 
     Returns
     -------
@@ -280,7 +306,7 @@ def cnet_to_geodataframe(
     needs_conversion = not _has_ground_coords(cnet_df) and cube_paths is not None
 
     if needs_conversion:
-        cnet_df = _lonlat_from_campt(cnet_df, cube_paths)
+        cnet_df = _lonlat_from_campt(cnet_df, cube_paths, clock_lookup=clock_lookup)
         lon_col, lat_col = "campt_lon", "campt_lat"
     else:
         lon_col = None

@@ -121,7 +121,10 @@ def _parse_polygon_text(text: str) -> shapely.Geometry:
     )
 
 
-def read_footprint(cube_path: str | Path) -> shapely.Geometry:
+def read_footprint(
+    cube_path: str | Path,
+    label: pvl.PVLModule | None = None,
+) -> shapely.Geometry:
     """Read the footprint polygon from an ISIS cube.
 
     The cube must have had ``footprintinit`` run on it.
@@ -130,6 +133,8 @@ def read_footprint(cube_path: str | Path) -> shapely.Geometry:
     ----------
     cube_path : path-like
         Path to the ISIS cube file.
+    label : pvl.PVLModule, optional
+        Pre-parsed PVL label. Parsed from *cube_path* if not given.
 
     Returns
     -------
@@ -142,7 +147,8 @@ def read_footprint(cube_path: str | Path) -> shapely.Geometry:
         If no polygon blob is found (footprintinit not run).
     """
     cube_path = Path(cube_path)
-    label = pvl.load(str(cube_path))
+    if label is None:
+        label = pvl.load(str(cube_path))
     blob_text = _find_polygon_blob(cube_path, label)
     return _parse_polygon_text(blob_text)
 
@@ -197,11 +203,16 @@ def load_footprints(
     for cp in cube_paths:
         try:
             label = pvl.load(str(cp))
-            geom = read_footprint(cp)
+            geom = read_footprint(cp, label=label)
 
             # Extract metadata
             inst = label["IsisCube"].get("Instrument", {})
             mapping = label["IsisCube"].get("Mapping", {})
+
+            clock = str(
+                inst.get("SpacecraftClockCount",
+                         inst.get("SpacecraftClockStartCount", ""))
+            )
 
             records.append({
                 "path": str(cp),
@@ -217,6 +228,7 @@ def load_footprints(
                     "SpacecraftName",
                     inst.get("SpacecraftId", "Unknown"),
                 ),
+                "clock": clock,
                 "level": 2 if mapping else 1,
             })
         except FootprintNotFoundError:
@@ -231,7 +243,7 @@ def load_footprints(
     if not records:
         return gpd.GeoDataFrame(
             columns=["path", "filename", "geometry", "target",
-                      "start_time", "instrument", "spacecraft", "level"],
+                      "start_time", "instrument", "spacecraft", "clock", "level"],
             geometry="geometry",
         )
 
