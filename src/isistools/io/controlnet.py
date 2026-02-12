@@ -69,6 +69,14 @@ def load_cnet(path: str | Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Control network not found: {path}")
 
+    from isistools.io.cache import get_cache
+
+    cache = get_cache()
+    cache_key = f"cnet:{path}:{path.stat().st_mtime_ns}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     df = from_isis(str(path))
 
     # Normalize plio column names to isistools conventions
@@ -89,6 +97,18 @@ def load_cnet(path: str | Path) -> pd.DataFrame:
     # Classify status
     df["status"] = df.apply(_classify_point_status, axis=1)
 
+    # Keep only columns isistools uses — plio's IsisControlNetwork carries
+    # protobuf repeated-message fields that cannot be pickled.
+    _keep = [
+        "pointId", "serialnumber", "sample", "line",
+        "residualSample", "residualLine", "residual_magnitude",
+        "measureType", "pointType", "pointIgnore", "measureIgnore", "status",
+        "adjustedX", "adjustedY", "adjustedLon", "adjustedLat",
+        "aprioriX", "aprioriY", "aprioriLon", "aprioriLat",
+    ]
+    df = pd.DataFrame(df[[c for c in _keep if c in df.columns]])
+
+    cache.set(cache_key, df)
     return df
 
 

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-02-12
+
+### Added
+
+- **Disk caching via `diskcache`**: repeated runs skip expensive I/O when
+  source files are unchanged. Cached items (at `~/.cache/isistools/`):
+  - Per-cube footprint records (PVL parsing + polygon blob reading)
+  - Control network DataFrames (protobuf decoding + status classification)
+  - Per-cube campt coordinate conversions (subprocess calls)
+- Cache keys include file `mtime_ns` so entries auto-invalidate on
+  source file changes.
+- New module `isistools.io.cache` with `get_cache()` accessor.
+- New dependency: `diskcache>=5.6`.
+
+### Changed
+
+- `load_cnet()` now returns a plain `pd.DataFrame` (stripped of plio's
+  `IsisControlNetwork` protobuf internals) for cache compatibility and
+  reduced memory footprint.
+
 ## [0.2.2] - 2025-02-12
 
 ### Changed
@@ -108,7 +128,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Typer CLI with commands: `mosaic`, `tiepoints`, `footprints`,
   `cnet-info`.
 
-[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/michaelaye/isistools/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/michaelaye/isistools/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/michaelaye/isistools/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/michaelaye/isistools/compare/v0.1.1...v0.2.0

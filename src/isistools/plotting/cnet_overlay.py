@@ -162,10 +162,26 @@ def _has_ground_coords(cnet_df: pd.DataFrame) -> bool:
 def _campt_one_serial(cube_path, samples, lines):
     """Run campt for one cube and return (lons, lats) or None on failure."""
     import csv
+    import hashlib
     import os
     import tempfile
 
     import kalasiris as isis
+
+    from isistools.io.cache import get_cache
+
+    # Check cache first — key on cube mtime + coordinate hash
+    cache = get_cache()
+    coord_bytes = str((samples, lines)).encode()
+    coord_hash = hashlib.md5(coord_bytes).hexdigest()[:12]
+    try:
+        mtime_ns = os.stat(cube_path).st_mtime_ns
+    except OSError:
+        mtime_ns = 0
+    cache_key = f"campt:{cube_path}:{mtime_ns}:{coord_hash}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     isis.environ = os.environ.copy()
 
@@ -197,7 +213,9 @@ def _campt_one_serial(cube_path, samples, lines):
                 lons.append(float(row["PositiveEast360Longitude"]))
 
         if len(lons) == len(samples):
-            return lons, lats
+            result = (lons, lats)
+            cache.set(cache_key, result)
+            return result
     except Exception:
         pass
     finally:

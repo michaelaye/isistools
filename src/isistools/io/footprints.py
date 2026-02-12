@@ -199,9 +199,18 @@ def load_footprints(
     else:
         cube_paths = [Path(p) for p in cube_list]
 
+    from isistools.io.cache import get_cache
+
+    cache = get_cache()
     records = []
     for cp in cube_paths:
         try:
+            cache_key = f"footprint:{cp}:{cp.stat().st_mtime_ns}"
+            cached = cache.get(cache_key)
+            if cached is not None:
+                records.append(cached)
+                continue
+
             label = pvl.load(str(cp))
             geom = read_footprint(cp, label=label)
 
@@ -214,7 +223,7 @@ def load_footprints(
                          inst.get("SpacecraftClockStartCount", ""))
             )
 
-            records.append({
+            record = {
                 "path": str(cp),
                 "filename": cp.name,
                 "geometry": geom,
@@ -230,7 +239,9 @@ def load_footprints(
                 ),
                 "clock": clock,
                 "level": 2 if mapping else 1,
-            })
+            }
+            cache.set(cache_key, record)
+            records.append(record)
         except FootprintNotFoundError:
             if skip_errors:
                 continue
