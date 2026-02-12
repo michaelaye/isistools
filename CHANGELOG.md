@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2025-02-12
+
+### Changed
+
+- Browser footprint map simplified to single hvplot call with `c="short_pid"`
+  color mapping instead of per-filename overlay loop.
+- Added `ctx_short_pid()` utility in `styles.py`, used by both browser and
+  `--win` code paths for consistent 18-char CTX product ID display.
+- Registered control points now use black crosses in browser map (matching
+  `--win` path); hover disabled on cnet points.
+- Plot enlarged to 1200x800 with larger axis labels (20pt), tick labels (14pt),
+  and legend text (15pt). Legend below plot in 3 columns with spacing.
+- Removed `geo=True` from footprint map; using `data_aspect=1` with free-form
+  `BoxZoomTool` for undistorted footprints with flexible zoom.
+- Cleaned up footprint hover: removed instrument, target, and filename fields;
+  shortened start_time to seconds.
+
+### Fixed
+
+- `FileNotFoundError` on `import panel` in non-`--win` path: added `_ensure_cwd()`
+  guard in CLI before any panel/holoviews import.
+
 ## [0.2.0] - 2025-02-12
 
 ### Added
@@ -71,7 +93,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Typer CLI with commands: `mosaic`, `tiepoints`, `footprints`,
   `cnet-info`.
 
-[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/michaelaye/isistools/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/michaelaye/isistools/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/michaelaye/isistools/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/michaelaye/isistools/releases/tag/v0.1.0

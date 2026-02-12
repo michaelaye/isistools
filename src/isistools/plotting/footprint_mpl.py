@@ -15,6 +15,8 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 import mplcursors
 
+from isistools.plotting.styles import ctx_short_pid
+
 if TYPE_CHECKING:
     import geopandas as gpd
     import pandas as pd
@@ -90,7 +92,7 @@ def footprint_window(
                 artists_to_filename[artist] = fn
         # Legend entry with short product ID (first 18 chars)
         legend_handles.append(Patch(edgecolor=color, facecolor=(*color[:3], 0.3),
-                                    linewidth=1.5, label=fn[:18]))
+                                    linewidth=1.5, label=ctx_short_pid(fn)))
 
     # Hover tooltip for footprints — shows filename on hover
     footprint_artists = list(artists_to_filename.keys())

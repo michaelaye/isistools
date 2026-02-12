@@ -80,6 +80,11 @@ IMAGE_DEFAULTS = {
 }
 
 
+def ctx_short_pid(filename: str) -> str:
+    """Shorten a CTX filename to a compact product ID (first 18 chars)."""
+    return filename[:18]
+
+
 def status_to_bokeh_style(status: str) -> dict:
     """Get Bokeh-compatible glyph style for a point status.
 

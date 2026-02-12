@@ -11,10 +11,27 @@ Usage::
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
 import typer
+
+
+def _ensure_cwd() -> None:
+    """Ensure the current working directory exists.
+
+    The ``param`` library calls ``os.getcwd()`` at import time (during class
+    definition of ``resolve_path``).  On macOS the CWD can transiently vanish
+    (e.g. when launched from a deleted tmpdir), causing an immediate
+    ``FileNotFoundError`` on ``import panel`` / ``import holoviews``.
+
+    Call this before any panel/holoviews/param import.
+    """
+    try:
+        os.getcwd()
+    except FileNotFoundError:
+        os.chdir(Path.home())
 
 app = typer.Typer(
     name="isistools",
@@ -35,6 +52,7 @@ def mosaic(
     no_browser: bool = typer.Option(False, "--no-browser", help="Don't open browser"),
 ):
     """Review mosaic footprints and image content (Qmos replacement)."""
+    _ensure_cwd()
     from isistools.apps.mosaic_review import MosaicReview
 
     typer.echo(f"Loading cubes from {cubelist}...")
@@ -55,6 +73,7 @@ def tiepoints(
     no_browser: bool = typer.Option(False, "--no-browser", help="Don't open browser"),
 ):
     """Review tie points between image pairs (Qnet replacement)."""
+    _ensure_cwd()
     from isistools.apps.tiepoint_review import TiepointReview
 
     typer.echo(f"Loading {cubelist} with {cnet}...")
@@ -95,6 +114,7 @@ def footprints(
 
         footprint_window(gdf, cnet_df=cnet_df)
     else:
+        _ensure_cwd()
         import panel as pn
 
         from isistools.plotting.footprint_map import footprint_map, footprint_map_with_cnet

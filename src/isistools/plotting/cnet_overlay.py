@@ -114,24 +114,29 @@ def cnet_points_map(
     hv.extension("bokeh")
 
     if hover_cols is None:
-        hover_cols = [c for c in ["pointId", "status", "residual_magnitude",
+        hover_cols = [c for c in ["status", "residual_magnitude",
                                    "n_measures"]
                       if c in cnet_gdf.columns]
 
+    # Styles matching the --win matplotlib path
+    _map_styles = {
+        "registered": {"color": "black", "marker": "x", "size": 160, "alpha": 0.9},
+        "unregistered": {"color": "#e74c3c", "marker": "circle", "size": 40, "alpha": 0.7},
+        "ignored": {"color": "#95a5a6", "marker": "circle", "size": 30, "alpha": 0.4},
+    }
+
     overlays = []
-    for status, style in CNET_POINT_STYLES.items():
-        if status == "selected":
-            continue
+    for status, style in _map_styles.items():
         subset = cnet_gdf[cnet_gdf["status"] == status]
         if subset.empty:
             continue
 
-        scatter = subset.hvplot.points(
-            geo=True,
-            hover_cols=hover_cols,
+        scatter = subset[["geometry"]].hvplot.points(
+            hover=False,
             color=style["color"],
+            marker=style["marker"],
             alpha=style["alpha"],
-            size=style["size"] * 10,
+            size=style["size"],
             label=f"{status} ({len(subset)})",
         )
         overlays.append(scatter)
