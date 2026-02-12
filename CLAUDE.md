@@ -49,9 +49,14 @@ The codebase follows a three-layer pattern: **I/O → Plotting → Apps**
 ### CLI (`cli.py`)
 Typer-based. Each command constructs an app object and calls `.serve()`. Entry point: `isistools = "isistools.cli:app"`.
 
-## Versioning
+## Versioning and Releases
 
 Single source of truth: `__init__.py` defines `__version__`. `pyproject.toml` reads it dynamically via `[tool.hatch.version]`. **Only edit `__init__.py` when bumping versions.**
+
+When releasing a new version, always do all three:
+1. Bump `__version__` in `src/isistools/__init__.py`
+2. Update `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format (move Unreleased items to the new version section, add comparison links)
+3. Tag the commit as `v{version}`
 
 ## Key Dependencies and Gotchas
 
