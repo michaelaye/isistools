@@ -1,10 +1,6 @@
----
-format:
-  html:
-    theme: solar
----
-
 # isistools
+
+[![DOI](https://zenodo.org/badge/1155816216.svg)](https://doi.org/10.5281/zenodo.18944803)
 
 Python-based review tools for ISIS3 coregistration workflows. Replaces Qmos and Qnet with modern, interactive visualization using HoloViews, Panel, and datashader.
 
