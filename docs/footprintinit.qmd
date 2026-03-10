@@ -1,0 +1,68 @@
+---
+title: "footprintinit"
+---
+
+## Purpose
+
+Batch-run ISIS `footprintinit` on all cubes in a list file, with parallel
+execution for speed.
+
+This is needed because `spiceinit` wipes the Polygon blob from cube files. If
+you re-run `spiceinit` (e.g., after `jigsaw update=True`), you must re-run
+`footprintinit` before any tool that reads footprints (`findimageoverlaps`,
+`isistools footprints`, etc.).
+
+## Usage
+
+```bash
+# Default: 4 parallel workers
+isistools footprintinit cubes.lis
+
+# 8 parallel workers
+isistools footprintinit cubes.lis -j 8
+
+# Single-threaded
+isistools footprintinit cubes.lis -j 1
+```
+
+## Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--jobs`, `-j` | 4 | Number of parallel workers |
+
+## Example output
+
+```
+Running footprintinit on 11 cubes (8 workers)...
+  OK: K05_055343_1840_XI_04N287W.lev1.cub
+  OK: V05_082075_1840_XN_04N287W.lev1.cub
+  OK: B08_012740_1840_XN_04N287W.lev1.cub
+  ...
+
+All 11 cubes done.
+```
+
+## When to use
+
+A typical ISIS coregistration pipeline should include `footprintinit` after
+every `spiceinit`:
+
+```
+spiceinit → footprintinit → findimageoverlaps → autoseed → pointreg → jigsaw
+```
+
+If `jigsaw` is run with `update=True`, the SPICE blobs are rewritten. Before
+generating new Level 2 products or re-running the tie point pipeline, run
+`footprintinit` again:
+
+```
+jigsaw (update=True) → footprintinit → cam2map
+```
+
+## Why parallel?
+
+Each `footprintinit` call is an independent ISIS subprocess that reads one cube
+file. With many cubes, running them sequentially wastes time. The
+`ThreadPoolExecutor` parallelism gives near-linear speedup since the work is
+I/O-bound (reading the cube, computing the footprint polygon, writing back).

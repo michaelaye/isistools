@@ -1,0 +1,31 @@
+project:
+  type: book
+  output-dir: _book
+  preview:
+    port: 4201
+
+book:
+  title: "isistools Documentation"
+  author: "K.-Michael Aye"
+  date: today
+  downloads: [pdf]
+  chapters:
+    - index.qmd
+    - footprints.qmd
+    - footprintinit.qmd
+    - mosaic.qmd
+    - tiepoints.qmd
+    - cnet-info.qmd
+    - python-api.qmd
+
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    lightbox: true
+  pdf:
+    toc: true
+    documentclass: report
+    papersize: a4
+    geometry:
+      - margin=2.5cm

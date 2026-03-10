@@ -1,0 +1,72 @@
+---
+title: "Overview"
+---
+
+## What is isistools?
+
+**isistools** is a Python toolkit that replaces ISIS3's legacy Qt-based review
+applications (Qmos, Qnet) with modern, interactive visualization built on the
+Python geospatial stack (HoloViews, Panel, datashader, geopandas).
+
+## Why?
+
+ISIS's Qmos and Qnet have several long-standing pain points:
+
+- **Qmos** requires level-1 unprojected images but displays footprints in map
+  projection (confusing), and renders image content very slowly.
+- **Qnet** requires level-2 map-projected images but displays them flipped in
+  detector readout order (makes comparison difficult).
+- **Both** use a color scheme where registered control points are nearly
+  invisible while unregistered points are prominent --- the opposite of what
+  you want during review.
+
+isistools fixes all of these.
+
+## Commands
+
+| Command | Purpose |
+|---------|---------|
+| `isistools footprints` | Interactive footprint map viewer + static PNG export |
+| `isistools footprintinit` | Batch-run ISIS `footprintinit` in parallel |
+| `isistools mosaic` | Mosaic review app (Qmos replacement) |
+| `isistools tiepoints` | Tie point review app (Qnet replacement) |
+| `isistools cnet-info` | Control network summary statistics |
+
+## Installation
+
+```bash
+pip install isistools
+```
+
+For development:
+
+```bash
+git clone https://github.com/michaelaye/isistools.git
+cd isistools
+pip install -e ".[dev]"
+```
+
+## Requirements
+
+- ISIS cube files with `footprintinit` already run (for footprint display)
+- Control networks in ISIS3 binary format (compatible with jigsaw)
+- GDAL with ISIS3 driver support (for reading `.cub` files via rioxarray)
+
+## Quick start
+
+```bash
+# View footprints interactively in the browser
+isistools footprints cubes.lis
+
+# Export a publication-ready footprint overview
+isistools footprints cubes.lis --png --title "My Mosaic"
+
+# Review a mosaic with control network overlay
+isistools mosaic cubes.lis --cnet control.net
+
+# Review individual tie points
+isistools tiepoints cubes.lis control.net
+
+# Print control network statistics
+isistools cnet-info control.net
+```

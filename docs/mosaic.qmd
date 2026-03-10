@@ -1,0 +1,66 @@
+---
+title: "mosaic"
+---
+
+## Purpose
+
+Interactive mosaic review application --- a modern replacement for ISIS's Qmos.
+Displays image footprints on a map with control network overlay and
+click-to-view image content.
+
+## Usage
+
+```bash
+# Basic footprint review
+isistools mosaic cubes.lis
+
+# With control network overlay
+isistools mosaic cubes.lis --cnet control.net
+
+# Custom port, don't auto-open browser
+isistools mosaic cubes.lis --port 5000 --no-browser
+```
+
+## Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--cnet`, `-c` | — | Control network file (`.net`) |
+| `--port`, `-p` | 0 (auto) | Server port |
+| `--no-browser` | off | Start server without opening browser |
+
+## What it shows
+
+The mosaic review app launches a Panel application in the browser with:
+
+- **Footprint map**: interactive map of all image footprints, colored per
+  image, with zoom/pan and hover info
+- **Image viewer**: click a footprint to load and display the full image with
+  rasterized rendering via datashader (handles large CTX images smoothly)
+- **Control network overlay** (when `--cnet` is provided): tie points plotted
+  on both the footprint map and the image viewer, color-coded by status:
+  - **Green**: registered (the main thing you want to see)
+  - **Red**: unregistered (needs attention)
+  - **Gray**: ignored (deliberately faded)
+
+## Improvements over Qmos
+
+| Qmos | isistools mosaic |
+|------|-----------------|
+| Requires level-1 cubes but shows map projection | Uses footprint polygons directly |
+| Slow image rendering | Rasterized via datashader --- fast even for large CTX strips |
+| Registered points nearly invisible | Registered points bright and prominent |
+| Qt-only, difficult to install | Browser-based, works anywhere Panel runs |
+
+## Python API
+
+```python
+from isistools.apps.mosaic_review import MosaicReview
+
+# In a Jupyter notebook
+app = MosaicReview("cubes.lis", cnet_path="control.net")
+app.panel()  # renders inline
+
+# As a standalone server
+app.serve(port=5000)
+```

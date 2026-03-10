@@ -1,0 +1,132 @@
+---
+title: "Python API"
+---
+
+## Overview
+
+All CLI commands are thin wrappers around the Python API. You can use the same
+modules directly in Jupyter notebooks or custom scripts.
+
+## I/O Layer
+
+### Footprints
+
+```python
+from isistools.io.footprints import load_footprints, read_footprint
+
+# Load all footprints from a cube list → GeoDataFrame
+gdf = load_footprints("cubes.lis")
+gdf = load_footprints(["path/to/cube1.cub", "path/to/cube2.cub"])
+
+# Read a single cube's footprint → Shapely geometry
+geom = read_footprint("image.cub")
+```
+
+The returned `GeoDataFrame` has columns: `path`, `filename`, `geometry`,
+`target`, `start_time`, `instrument`, `spacecraft`, `clock`, `level`.
+
+### Control Networks
+
+```python
+from isistools.io.controlnet import load_cnet, cnet_summary
+
+# Load ISIS binary control network → DataFrame
+df = load_cnet("control.net")
+
+# Summary statistics
+stats = cnet_summary(df)
+```
+
+The DataFrame contains per-measure rows with columns including `id` (point ID),
+`serialnumber`, `measureType`, `sample`, `line`, `residualSample`,
+`residualLine`, and point-level fields like `aprioriX/Y/Z`,
+`adjustedX/Y/Z`, `pointIgnore`.
+
+### Cube Loading
+
+```python
+from isistools.io.cubes import load_cube
+
+# Load a cube as an xarray DataArray (via rioxarray)
+da = load_cube("image.cub")
+```
+
+## Plotting Layer
+
+### Footprint Maps
+
+```python
+from isistools.plotting.footprint_map import footprint_map
+from isistools.plotting.footprint_mpl import footprint_png, footprint_window
+
+# Interactive HoloViews map (for notebooks or Panel)
+plot = footprint_map(gdf)
+
+# Static PNG export
+footprint_png(gdf, "overview.png", title="My Mosaic", dpi=200)
+
+# Native matplotlib window
+footprint_window(gdf, title="My Mosaic")
+```
+
+### Image Viewer
+
+```python
+from isistools.plotting.image_viewer import image_plot, image_with_cnet
+
+# Rasterized image display
+plot = image_plot(da)
+
+# Image with control point overlay
+plot = image_with_cnet(da, cnet_df, serial_number="MRO/CTX/1211056841:215")
+```
+
+### Control Network Overlay
+
+```python
+from isistools.plotting.cnet_overlay import cnet_to_geodataframe
+
+# Convert control network to GeoDataFrame for map overlay
+cnet_gdf = cnet_to_geodataframe(cnet_df, cube_paths=gdf["path"].tolist())
+```
+
+## App Layer
+
+### Mosaic Review
+
+```python
+from isistools.apps.mosaic_review import MosaicReview
+
+app = MosaicReview("cubes.lis", cnet_path="control.net")
+app.panel()       # inline in notebook
+app.serve(port=5000)  # standalone server
+```
+
+### Tiepoint Review
+
+```python
+from isistools.apps.tiepoint_review import TiepointReview
+
+app = TiepointReview("cubes.lis", "control.net")
+app.panel()       # inline in notebook
+app.serve(port=5001)  # standalone server
+```
+
+## Caching
+
+isistools uses `diskcache` to cache expensive I/O operations. The cache lives
+at `~/.cache/isistools/` and auto-invalidates when source files change (keyed
+on `mtime_ns`).
+
+Cached items:
+
+- Per-cube footprint records (PVL parsing + polygon blob reading)
+- Control network DataFrames (protobuf decoding + status classification)
+- Per-cube campt coordinate conversions (subprocess calls)
+
+To clear the cache:
+
+```python
+from isistools.io.cache import get_cache
+get_cache().clear()
+```

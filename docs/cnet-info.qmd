@@ -1,0 +1,62 @@
+---
+title: "cnet-info"
+---
+
+## Purpose
+
+Print summary statistics for an ISIS control network file. Quick way to check
+network health without launching a full viewer.
+
+## Usage
+
+```bash
+isistools cnet-info control.net
+```
+
+## Example output
+
+```
+Control Network: jigged_network_rerun.net
+  Points:        414
+  Measures:      813
+  Images:        2
+  Registered:    786
+  Unregistered:  0
+  Ignored:       27
+  Mean Residual: 0.3446
+  Max Residual:  1.0511
+```
+
+## Fields
+
+| Field | Description |
+|-------|-------------|
+| Points | Total number of tie points |
+| Measures | Total number of measures (each point has one measure per image) |
+| Images | Number of distinct images in the network |
+| Registered | Measures with successful registration (measureType >= 2) |
+| Unregistered | Measures that failed registration |
+| Ignored | Measures or points flagged as ignored |
+| Mean Residual | Mean pixel residual across all measures |
+| Max Residual | Maximum pixel residual (potential outlier) |
+
+## Interpreting the output
+
+- **Registered / Measures** ratio tells you the registration success rate.
+  In the example above: 786 / 813 = 96.7%.
+- **Ignored** points were excluded from the bundle adjustment (by jigsaw's
+  outlier rejection or manual flagging).
+- **Mean Residual** below ~1.0 pixel indicates good registration quality.
+  Values above 2--3 suggest systematic problems.
+- **Max Residual** flags potential outliers. If much larger than the mean,
+  consider tightening jigsaw's `rejection_multiplier`.
+
+## Python API
+
+```python
+from isistools.io.controlnet import load_cnet, cnet_summary
+
+df = load_cnet("control.net")
+stats = cnet_summary(df)
+print(f"Registration rate: {stats['n_registered'] / stats['n_measures']:.1%}")
+```

@@ -25,6 +25,7 @@ htmlcov/
 *_files/
 *.html
 _site/
+_book/
 _freeze/
 
 # Bokeh / Panel / HoloViews artifacts
@@ -40,6 +41,7 @@ dask-worker-space/
 
 # Screenshots / test artifacts
 *.png
+!docs/images/*.png
 
 # OS
 .DS_Store
