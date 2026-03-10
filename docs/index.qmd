@@ -70,3 +70,9 @@ isistools tiepoints cubes.lis control.net
 # Print control network statistics
 isistools cnet-info control.net
 ```
+
+## Acknowledgements
+
+The development of isistools is funded by the Federal Ministry of Research,
+Technology and Space (BMFTR) through the German Space Agency at DLR on the
+basis of a resolution of the German Bundestag (Funding code: 50 OO 2204).
