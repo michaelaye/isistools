@@ -25,6 +25,8 @@ ISIS's Qmos and Qnet have several pain points:
 - **Control network overlay**: Tie points with sensible colors (registered = bright green, unregistered = red, ignored = gray). Residual vectors. Point detail on click.
 - **Dual interface**: Same code works in Jupyter notebooks and as standalone Panel apps in the browser.
 - **CLI**: `isistools mosaic`, `isistools tiepoints`, `isistools footprints` commands that launch Panel apps.
+- **Static PNG export**: `isistools footprints --png` generates publication-ready footprint overview images.
+- **Batch footprintinit**: `isistools footprintinit` runs ISIS `footprintinit` in parallel on all cubes in a list file.
 
 ## Installation
 
@@ -45,6 +47,13 @@ isistools tiepoints cubes.lis control.net
 
 # Quick footprint map
 isistools footprints cubes.lis
+
+# Export footprint overview as PNG (default: footprints_overview.png)
+isistools footprints cubes.lis --png
+isistools footprints cubes.lis --png-path my_overview.png --title "MC-13E Gap" --dpi 200
+
+# Batch footprintinit (parallel, 8 workers)
+isistools footprintinit cubes.lis -j 8
 
 # Control network summary stats
 isistools cnet-info control.net
