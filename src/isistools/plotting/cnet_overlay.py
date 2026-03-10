@@ -120,9 +120,9 @@ def cnet_points_map(
 
     # Styles matching the --win matplotlib path
     _map_styles = {
-        "registered": {"color": "black", "marker": "x", "size": 160, "alpha": 0.9},
+        "registered": {"color": "black", "marker": "circle", "size": 30, "alpha": 0.7},
         "unregistered": {"color": "#e74c3c", "marker": "circle", "size": 40, "alpha": 0.7},
-        "ignored": {"color": "#95a5a6", "marker": "circle", "size": 30, "alpha": 0.4},
+        "ignored": {"color": "red", "marker": "circle", "size": 50, "alpha": 0.9},
     }
 
     overlays = []

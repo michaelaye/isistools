@@ -79,9 +79,9 @@ def _plot_footprints(
             cnet_df, cube_paths=cube_paths, clock_lookup=clock_lookup,
         )
         _cnet_mpl_styles = {
-            "registered": {"color": "black", "marker": "x", "markersize": 16, "alpha": 0.9},
+            "registered": {"color": "black", "marker": "o", "markersize": 3, "alpha": 0.7},
             "unregistered": {"color": "#e74c3c", "marker": "o", "markersize": 4, "alpha": 0.7},
-            "ignored": {"color": "#95a5a6", "marker": "o", "markersize": 3, "alpha": 0.4},
+            "ignored": {"color": "red", "marker": "o", "markersize": 5, "alpha": 0.9},
         }
         for status, style in _cnet_mpl_styles.items():
             sub = cnet_gdf[cnet_gdf["status"] == status]
