@@ -1,110 +1,64 @@
 # isistools
 
 [![DOI](https://zenodo.org/badge/1155816216.svg)](https://doi.org/10.5281/zenodo.18944803)
+[![PyPI](https://img.shields.io/pypi/v/isistools)](https://pypi.org/project/isistools/)
 
-Python-based review tools for ISIS3 coregistration workflows. Replaces Qmos and Qnet with modern, interactive visualization using HoloViews, Panel, and datashader.
+Python-based review tools for ISIS3 coregistration workflows. Replaces Qmos
+and Qnet with modern, interactive visualization using HoloViews, Panel, and
+datashader.
+
+**[Documentation](https://michaelaye.github.io/isistools/)**
+
+## Installation
+
+```bash
+pip install isistools
+```
+
+For development:
+
+```bash
+git clone https://github.com/michaelaye/isistools.git
+cd isistools
+pip install -e ".[dev]"
+```
+
+## Quick start
+
+```bash
+# Interactive footprint map in the browser
+isistools footprints cubes.lis
+
+# Export publication-ready PNG
+isistools footprints cubes.lis --png --title "My Mosaic"
+
+# Mosaic review with control network (Qmos replacement)
+isistools mosaic cubes.lis --cnet control.net
+
+# Tie point review (Qnet replacement)
+isistools tiepoints cubes.lis control.net
+
+# Batch footprintinit (parallel)
+isistools footprintinit cubes.lis -j 8
+
+# Control network summary
+isistools cnet-info control.net
+```
 
 ## Why?
 
 ISIS's Qmos and Qnet have several pain points:
 
-- **Qmos** requires level-1 unprojected images but displays footprints in map projection (confusing), and renders image content very slowly.
-- **Qnet** requires level-2 map-projected images but displays them flipped in detector readout order (makes comparison difficult).
-- **Both** use a color scheme where registered control points are nearly invisible while unregistered points are prominent — the opposite of what you want during review.
+- **Qmos** requires level-1 images but displays footprints in map projection,
+  and renders image content very slowly.
+- **Qnet** requires level-2 images but displays them flipped in detector
+  readout order.
+- **Both** use a color scheme where registered control points are nearly
+  invisible while unregistered points are prominent.
 
-**isistools** fixes all of these by building on the Python geospatial stack.
-
-## Features
-
-- **Footprint map**: Interactive map of image footprints using geopandas + hvplot, with hover info and click-to-select.
-- **Image viewer**: Fast rasterized image display via rioxarray + datashader. Images always shown in correct (north-up) orientation.
-- **Control network overlay**: Tie points with sensible colors (registered = bright green, unregistered = red, ignored = gray). Residual vectors. Point detail on click.
-- **Dual interface**: Same code works in Jupyter notebooks and as standalone Panel apps in the browser.
-- **CLI**: `isistools mosaic`, `isistools tiepoints`, `isistools footprints` commands that launch Panel apps.
-- **Static PNG export**: `isistools footprints --png` generates publication-ready footprint overview images.
-- **Batch footprintinit**: `isistools footprintinit` runs ISIS `footprintinit` in parallel on all cubes in a list file.
-
-## Installation
-
-```bash
-pip install -e .
-```
-
-## Usage
-
-### CLI
-
-```bash
-# Mosaic review (Qmos replacement)
-isistools mosaic cubes.lis --cnet control.net
-
-# Tiepoint review (Qnet replacement)
-isistools tiepoints cubes.lis control.net
-
-# Quick footprint map
-isistools footprints cubes.lis
-
-# Export footprint overview as PNG (default: footprints_overview.png)
-isistools footprints cubes.lis --png
-isistools footprints cubes.lis --png-path my_overview.png --title "MC-13E Gap" --dpi 200
-
-# Batch footprintinit (parallel, 8 workers)
-isistools footprintinit cubes.lis -j 8
-
-# Control network summary stats
-isistools cnet-info control.net
-```
-
-### Notebook
-
-```python
-from isistools.apps.mosaic_review import MosaicReview
-
-app = MosaicReview("cubes.lis", cnet_path="control.net")
-app.panel()  # renders inline
-```
-
-```python
-from isistools.apps.tiepoint_review import TiepointReview
-
-app = TiepointReview("cubes.lis", "control.net")
-app.panel()
-```
-
-### Low-level API
-
-```python
-from isistools.io.footprints import load_footprints
-from isistools.io.controlnet import load_cnet
-from isistools.io.cubes import load_cube
-from isistools.plotting.footprint_map import footprint_map
-from isistools.plotting.image_viewer import image_plot, image_with_cnet
-from isistools.plotting.cnet_overlay import cnet_to_geodataframe
-
-# Load data
-gdf = load_footprints("cubes.lis")
-cnet = load_cnet("control.net")
-da = load_cube("image.cub")
-
-# Plot footprints
-footprint_map(gdf)
-
-# Plot image with control points
-image_with_cnet(da, cnet, serial_number="MRO/HIRISE/...")
-
-# Convert cnet to GeoDataFrame for map overlay
-cnet_gdf = cnet_to_geodataframe(cnet)
-```
-
-## Requirements
-
-- Cubes must have `footprintinit` already run for footprint display
-- Control networks in ISIS3 binary format (compatible with jigsaw)
-- GDAL with ISIS3 driver support (for reading .cub files via rioxarray)
-
-## Dependencies
-
-Core: geopandas, hvplot, holoviews, datashader, panel, rioxarray, plio, pvl, typer
+isistools fixes all of these. See the
+[documentation](https://michaelaye.github.io/isistools/) for details on each
+command, the Python API, and example figures.
 
 ## License
 
