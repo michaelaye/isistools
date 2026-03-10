@@ -90,18 +90,30 @@ def footprints(
     cnet: Optional[Path] = typer.Option(
         None, "--cnet", "-c", help="Optional control network overlay",
     ),
+    png: bool = typer.Option(
+        False, "--png", help="Save static PNG instead of launching viewer",
+    ),
+    png_path: Optional[Path] = typer.Option(
+        None, "--png-path", help="PNG output path (default: footprints_overview.png)",
+    ),
+    dpi: int = typer.Option(150, "--dpi", help="PNG resolution (only with --png)"),
+    title: Optional[str] = typer.Option(
+        None, "--title", "-t", help="Figure title (default: cubelist filename)",
+    ),
     win: bool = typer.Option(
         False, "--win", help="Native matplotlib window instead of browser",
     ),
     port: int = typer.Option(0, "--port", "-p", help="Server port (0=auto)"),
     no_browser: bool = typer.Option(False, "--no-browser", help="Don't open browser"),
 ):
-    """Quick footprint map viewer."""
+    """Quick footprint map viewer, or static PNG export with --png."""
     from isistools.io.footprints import load_footprints
 
     typer.echo(f"Loading footprints from {cubelist}...")
     gdf = load_footprints(cubelist)
     typer.echo(f"Loaded {len(gdf)} footprints")
+
+    fig_title = title or cubelist.stem
 
     cnet_df = None
     if cnet is not None:
@@ -109,10 +121,16 @@ def footprints(
 
         cnet_df = load_cnet(cnet)
 
-    if win:
+    if png or png_path:
+        from isistools.plotting.footprint_mpl import footprint_png
+
+        outfile = png_path or Path("footprints_overview.png")
+        out = footprint_png(gdf, outfile, cnet_df=cnet_df, title=fig_title, dpi=dpi)
+        typer.echo(f"Saved: {out}")
+    elif win:
         from isistools.plotting.footprint_mpl import footprint_window
 
-        footprint_window(gdf, cnet_df=cnet_df)
+        footprint_window(gdf, cnet_df=cnet_df, title=fig_title)
     else:
         _ensure_cwd()
         import panel as pn
@@ -140,6 +158,50 @@ def footprints(
         pn.serve(
             pn.pane.HoloViews(plot), port=port, show=not no_browser, title="Footprints",
         )
+
+
+@app.command()
+def footprintinit(
+    cubelist: Path = typer.Argument(
+        ..., help="Cube list file (one cube path per line)", exists=True,
+    ),
+    jobs: int = typer.Option(
+        4, "--jobs", "-j", help="Number of parallel workers",
+    ),
+):
+    """Run ISIS footprintinit on all cubes in a list file."""
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from isistools.io.footprints import read_cube_list
+
+    cubes = read_cube_list(cubelist)
+    typer.echo(f"Running footprintinit on {len(cubes)} cubes ({jobs} workers)...")
+
+    def _run(cube: Path) -> tuple[Path, bool, str]:
+        result = subprocess.run(
+            ["footprintinit", f"from={cube}"],
+            capture_output=True, text=True,
+        )
+        ok = result.returncode == 0
+        msg = result.stderr.strip() if not ok else ""
+        return cube, ok, msg
+
+    failed = []
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = {pool.submit(_run, c): c for c in cubes}
+        for future in as_completed(futures):
+            cube, ok, msg = future.result()
+            if ok:
+                typer.echo(f"  OK: {cube.name}")
+            else:
+                typer.echo(f"  FAIL: {cube.name} — {msg}")
+                failed.append(cube)
+
+    if failed:
+        typer.echo(f"\n{len(failed)}/{len(cubes)} failed.")
+        raise typer.Exit(1)
+    typer.echo(f"\nAll {len(cubes)} cubes done.")
 
 
 @app.command()

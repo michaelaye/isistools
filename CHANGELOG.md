@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-10
+
+### Added
+
+- **`footprintinit` CLI command**: batch-run ISIS `footprintinit` on all cubes
+  in a list file with parallel execution (`-j` flag, default 4 workers).
+- **Static PNG export for footprints** (`--png` flag): publication-ready
+  footprint overview images via headless matplotlib (Agg backend). Defaults to
+  `footprints_overview.png`; override with `--png-path`. Supports `--dpi` and
+  `--title` options.
+- New `footprint_png()` function in `plotting.footprint_mpl` for programmatic
+  PNG export.
+
+### Changed
+
+- Refactored `footprint_mpl.py`: extracted shared `_plot_footprints()` core
+  used by both the interactive window viewer and the new PNG exporter.
+  `mplcursors` and `QtAgg` backend are now only imported in the interactive
+  `footprint_window()` path.
+- `footprints` CLI command accepts `--title` option (defaults to cubelist stem).
+
 ## [0.3.0] - 2025-02-12
 
 ### Added
@@ -128,7 +149,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Typer CLI with commands: `mosaic`, `tiepoints`, `footprints`,
   `cnet-info`.
 
-[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/michaelaye/isistools/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/michaelaye/isistools/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/michaelaye/isistools/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/michaelaye/isistools/compare/v0.2.0...v0.2.1
