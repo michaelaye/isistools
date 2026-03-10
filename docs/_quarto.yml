@@ -27,6 +27,7 @@ format:
     theme:
       light: sandstone
       dark: superhero
+    css: styles.css
     toc: true
     toc-depth: 3
     lightbox: true

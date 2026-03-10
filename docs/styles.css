@@ -1,0 +1,10 @@
+/* Fix inline code readability in all contexts */
+code:not(.sourceCode) {
+  background-color: rgba(222, 226, 230, .65);
+  padding: 0.125em 0.25em;
+  border-radius: 0.25em;
+}
+
+[data-bs-theme="dark"] code:not(.sourceCode) {
+  background-color: rgba(67, 67, 67, .65);
+}
