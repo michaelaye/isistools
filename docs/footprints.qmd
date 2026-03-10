@@ -71,6 +71,11 @@ Two overlapping CTX images (K05_055343 + V05_082075) in the MC-13E gap region:
 
 ![Footprint overview showing the overlap between two CTX strips. Each image is colored separately, with a right-side legend identifying the product IDs.](images/footprints_example.png){#fig-footprints-example}
 
+With `--cnet`, control network points are overlaid and color-coded by status
+(registered, unregistered, ignored):
+
+![Footprints with control network overlay. Registered tie points (black crosses) fill the overlap region; ignored points (gray) are scattered along the edges.](images/footprints_with_cnet.png){#fig-footprints-cnet}
+
 ## Input format
 
 The cube list file is a plain text file with one cube path per line. Blank
