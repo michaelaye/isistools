@@ -11,20 +11,26 @@ book:
   downloads: [pdf]
   chapters:
     - index.qmd
-    - footprints.qmd
-    - footprintinit.qmd
-    - mosaic.qmd
-    - tiepoints.qmd
-    - cnet-info.qmd
-    - python-api.qmd
+    - part: "CLI Commands"
+      chapters:
+        - footprints.qmd
+        - footprintinit.qmd
+        - mosaic.qmd
+        - tiepoints.qmd
+        - cnet-info.qmd
+    - part: "Reference"
+      chapters:
+        - python-api.qmd
 
 format:
   html:
     toc: true
     toc-depth: 3
     lightbox: true
+    number-sections: false
   pdf:
     toc: true
+    number-sections: false
     documentclass: report
     papersize: a4
     geometry:

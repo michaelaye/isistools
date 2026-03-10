@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-10
+
+### Added
+
+- **Quarto book documentation** with one page per CLI subcommand, Python API
+  reference, and real example figures from CTX test data.
+- **GitHub Actions workflow** for building docs and deploying to GitHub Pages.
+- **`[project.urls]`** in pyproject.toml for PyPI sidebar links (Homepage,
+  Repository, Changelog, Issues).
+
 ## [0.4.0] - 2026-03-10
 
 ### Added
@@ -149,7 +159,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Typer CLI with commands: `mosaic`, `tiepoints`, `footprints`,
   `cnet-info`.
 
-[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/michaelaye/isistools/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/michaelaye/isistools/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/michaelaye/isistools/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/michaelaye/isistools/compare/v0.2.1...v0.2.2
