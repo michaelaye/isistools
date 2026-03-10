@@ -151,12 +151,43 @@ def cnet_points_map(
     return result
 
 
-def _has_ground_coords(cnet_df: pd.DataFrame) -> bool:
-    """Check if the control network has non-zero ground coordinates."""
-    for col in ["adjustedX", "adjustedLon", "aprioriX", "aprioriLon"]:
+def _has_lonlat_coords(cnet_df: pd.DataFrame) -> bool:
+    """Check if the control network has non-zero lon/lat columns (degrees)."""
+    for col in ["adjustedLon", "adjustedLat", "aprioriLon", "aprioriLat"]:
         if col in cnet_df.columns and (cnet_df[col] != 0).any():
             return True
     return False
+
+
+def _has_bodyfixed_coords(cnet_df: pd.DataFrame) -> bool:
+    """Check if the control network has non-zero body-fixed XYZ (meters)."""
+    for prefix in ["adjusted", "apriori"]:
+        cols = [f"{prefix}X", f"{prefix}Y", f"{prefix}Z"]
+        if all(c in cnet_df.columns for c in cols):
+            if any((cnet_df[c] != 0).any() for c in cols):
+                return True
+    return False
+
+
+def _bodyfixed_to_lonlat(cnet_df: pd.DataFrame) -> tuple[str, str]:
+    """Convert body-fixed XYZ columns to lon/lat (degrees).
+
+    ISIS body-fixed coordinates are planetocentric (X, Y, Z) in meters.
+    Conversion: lon = atan2(Y, X), lat = atan2(Z, sqrt(X² + Y²)).
+    Returns positive-east 0–360 longitude.
+    """
+    for prefix in ["adjusted", "apriori"]:
+        x_col, y_col, z_col = f"{prefix}X", f"{prefix}Y", f"{prefix}Z"
+        if all(c in cnet_df.columns for c in [x_col, y_col, z_col]):
+            if (cnet_df[x_col] != 0).any():
+                lon_col = f"{prefix}Lon"
+                lat_col = f"{prefix}Lat"
+                cnet_df[lon_col] = np.degrees(np.arctan2(cnet_df[y_col], cnet_df[x_col])) % 360
+                cnet_df[lat_col] = np.degrees(
+                    np.arctan2(cnet_df[z_col], np.sqrt(cnet_df[x_col]**2 + cnet_df[y_col]**2))
+                )
+                return lon_col, lat_col
+    raise ValueError("No body-fixed XYZ coordinates found")
 
 
 def _campt_one_serial(cube_path, samples, lines):
@@ -321,28 +352,31 @@ def cnet_to_geodataframe(
     gpd.GeoDataFrame
         One row per control point with lon/lat geometry.
     """
-    needs_conversion = not _has_ground_coords(cnet_df) and cube_paths is not None
-
-    if needs_conversion:
+    if _has_lonlat_coords(cnet_df):
+        # Already have lon/lat in degrees
+        lon_col = lat_col = None
+        for lon_candidate in ["adjustedLon", "aprioriLon"]:
+            if lon_candidate in cnet_df.columns and (cnet_df[lon_candidate] != 0).any():
+                lon_col = lon_candidate
+                break
+        for lat_candidate in ["adjustedLat", "aprioriLat"]:
+            if lat_candidate in cnet_df.columns and (cnet_df[lat_candidate] != 0).any():
+                lat_col = lat_candidate
+                break
+    elif _has_bodyfixed_coords(cnet_df):
+        # Convert body-fixed XYZ (meters) to lon/lat (degrees)
+        cnet_df = cnet_df.copy()
+        lon_col, lat_col = _bodyfixed_to_lonlat(cnet_df)
+    elif cube_paths is not None:
+        # No ground coords at all — use campt to convert sample/line
         cnet_df = _lonlat_from_campt(cnet_df, cube_paths, clock_lookup=clock_lookup)
         lon_col, lat_col = "campt_lon", "campt_lat"
     else:
-        lon_col = None
-        lat_col = None
-        for lon_candidate in ["adjustedX", "adjustedLon", "aprioriX", "aprioriLon"]:
-            if lon_candidate in cnet_df.columns:
-                lon_col = lon_candidate
-                break
-        for lat_candidate in ["adjustedY", "adjustedLat", "aprioriY", "aprioriLat"]:
-            if lat_candidate in cnet_df.columns:
-                lat_col = lat_candidate
-                break
-
-        if lon_col is None or lat_col is None:
-            raise ValueError(
-                "Cannot find longitude/latitude columns in control network. "
-                f"Available columns: {list(cnet_df.columns)}"
-            )
+        raise ValueError(
+            "Cannot determine lon/lat for control network points. "
+            "No lon/lat columns, no body-fixed XYZ, and no cube_paths for campt. "
+            f"Available columns: {list(cnet_df.columns)}"
+        )
 
     # Aggregate per point
     point_groups = cnet_df.groupby("pointId")
@@ -352,7 +386,7 @@ def cnet_to_geodataframe(
         lon = group[lon_col].mean()
         lat = group[lat_col].mean()
 
-        if np.isnan(lon) or np.isnan(lat):
+        if np.isnan(lon) or np.isnan(lat) or (lon == 0 and lat == 0):
             continue
 
         # Determine overall point status

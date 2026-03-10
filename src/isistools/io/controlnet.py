@@ -103,8 +103,8 @@ def load_cnet(path: str | Path) -> pd.DataFrame:
         "pointId", "serialnumber", "sample", "line",
         "residualSample", "residualLine", "residual_magnitude",
         "measureType", "pointType", "pointIgnore", "measureIgnore", "status",
-        "adjustedX", "adjustedY", "adjustedLon", "adjustedLat",
-        "aprioriX", "aprioriY", "aprioriLon", "aprioriLat",
+        "adjustedX", "adjustedY", "adjustedZ",
+        "aprioriX", "aprioriY", "aprioriZ",
     ]
     df = pd.DataFrame(df[[c for c in _keep if c in df.columns]])
 
