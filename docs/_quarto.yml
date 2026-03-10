@@ -24,6 +24,9 @@ book:
 
 format:
   html:
+    theme:
+      light: sandstone
+      dark: superhero
     toc: true
     toc-depth: 3
     lightbox: true
