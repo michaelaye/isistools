@@ -31,8 +31,8 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      - name: Render Quarto site
-        run: quarto render docs
+      - name: Render Quarto site (HTML only)
+        run: quarto render docs --to html
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
