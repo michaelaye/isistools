@@ -55,6 +55,10 @@ def cnet_points_image(
     if df.empty:
         return hv.Points([])
 
+    # Rename sample/line to x/y to match the rioxarray image dimensions,
+    # so HoloViews shares the same axes when overlaying on an image.
+    df = df.rename(columns={"sample": "x", "line": "y"})
+
     if hover_cols is None:
         hover_cols = [c for c in ["pointId", "status", "residual_magnitude",
                                    "measureType", "pointType"]
@@ -70,8 +74,8 @@ def cnet_points_image(
             continue
 
         scatter = subset.hvplot.scatter(
-            x="sample",
-            y="line",
+            x="x",
+            y="y",
             hover_cols=hover_cols,
             color=style["color"],
             alpha=style["alpha"],
@@ -449,12 +453,15 @@ def cnet_residual_vectors(
     if df.empty:
         return hv.Segments([])
 
-    # Create segments from (sample, line) to (sample + res*scale, line + res*scale)
-    df["sample_end"] = df["sample"] + df.get("residualSample", 0.0) * scale
-    df["line_end"] = df["line"] + df.get("residualLine", 0.0) * scale
+    # Rename to x/y to match rioxarray image dimensions
+    df = df.rename(columns={"sample": "x", "line": "y"})
+
+    # Create segments from (x, y) to (x + res*scale, y + res*scale)
+    df["x_end"] = df["x"] + df.get("residualSample", 0.0) * scale
+    df["y_end"] = df["y"] + df.get("residualLine", 0.0) * scale
 
     segments = hv.Segments(
-        df, kdims=["sample", "line", "sample_end", "line_end"]
+        df, kdims=["x", "y", "x_end", "y_end"]
     ).opts(
         color="#e74c3c",
         line_width=1.5,
