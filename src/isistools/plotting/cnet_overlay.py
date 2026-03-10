@@ -55,16 +55,14 @@ def cnet_points_image(
     if df.empty:
         return hv.Points([])
 
-    # Rename sample/line to x/y to match the rioxarray image dimensions,
-    # so HoloViews shares the same axes when overlaying on an image.
-    df = df.rename(columns={"sample": "x", "line": "y"})
-
     if hover_cols is None:
         hover_cols = [c for c in ["pointId", "status", "residual_magnitude",
                                    "measureType", "pointType"]
                       if c in df.columns]
 
-    # Build per-status overlays for proper styling
+    # HoloViews Image with kdims=['y','x'] maps the FIRST kdim ('y'/lines)
+    # to horizontal and SECOND kdim ('x'/samples) to vertical. The scatter
+    # must match: horizontal=line, vertical=sample.
     overlays = []
     for status, style in CNET_POINT_STYLES.items():
         if status == "selected":
@@ -74,8 +72,8 @@ def cnet_points_image(
             continue
 
         scatter = subset.hvplot.scatter(
-            x="x",
-            y="y",
+            x="line",
+            y="sample",
             hover_cols=hover_cols,
             color=style["color"],
             alpha=style["alpha"],
@@ -453,15 +451,13 @@ def cnet_residual_vectors(
     if df.empty:
         return hv.Segments([])
 
-    # Rename to x/y to match rioxarray image dimensions
-    df = df.rename(columns={"sample": "x", "line": "y"})
-
-    # Create segments from (x, y) to (x + res*scale, y + res*scale)
-    df["x_end"] = df["x"] + df.get("residualSample", 0.0) * scale
-    df["y_end"] = df["y"] + df.get("residualLine", 0.0) * scale
+    # HoloViews Image maps first kdim ('y'/lines) to horizontal and
+    # second kdim ('x'/samples) to vertical. Segments must match.
+    df["line_end"] = df["line"] + df.get("residualLine", 0.0) * scale
+    df["sample_end"] = df["sample"] + df.get("residualSample", 0.0) * scale
 
     segments = hv.Segments(
-        df, kdims=["x", "y", "x_end", "y_end"]
+        df, kdims=["line", "sample", "line_end", "sample_end"]
     ).opts(
         color="#e74c3c",
         line_width=1.5,
