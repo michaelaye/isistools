@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-03-11
+
+### Fixed
+
+- HoloViews shared-axis linking between map and image plots caused axis
+  conflicts — added `linked_axes=False`, `shared_axes=False`, and renamed
+  image dims from x/y to sample/line.
+
+### Changed
+
+- Cnet point styles: smaller markers (size 3), cross markers for
+  registered/unregistered, red circle for ignored points (QA flag).
+
 ## [0.5.2] - 2026-03-10
 
 ### Changed
@@ -178,7 +191,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Typer CLI with commands: `mosaic`, `tiepoints`, `footprints`,
   `cnet-info`.
 
-[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/michaelaye/isistools/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/michaelaye/isistools/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/michaelaye/isistools/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/michaelaye/isistools/compare/v0.4.0...v0.5.0

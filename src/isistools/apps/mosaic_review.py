@@ -77,8 +77,16 @@ class MosaicReview:
         self._cnet_info = CnetInfoPanel()
 
         # Plot panes
-        self._map_pane = pn.pane.HoloViews(hv.Div("Load a cube list to begin"), sizing_mode="stretch_both")
-        self._image_pane = pn.pane.HoloViews(hv.Div("Select an image from the map"), sizing_mode="stretch_both")
+        self._map_pane = pn.pane.HoloViews(
+            hv.Div("Load a cube list to begin"),
+            sizing_mode="stretch_both",
+            linked_axes=False,
+        )
+        self._image_pane = pn.pane.HoloViews(
+            hv.Div("Select an image from the map"),
+            sizing_mode="stretch_both",
+            linked_axes=False,
+        )
 
         # Image selector dropdown (populated after loading cubes)
         self._image_dropdown = pn.widgets.Select(

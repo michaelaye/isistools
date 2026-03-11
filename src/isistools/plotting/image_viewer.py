@@ -69,6 +69,11 @@ def image_plot(
         if "/" in title:
             title = title.rsplit("/", 1)[-1]
 
+    # Rename dims to sample/line to avoid HoloViews shared-axis linking
+    # with map plots that also use x/y (for lon/lat).
+    if "x" in da.dims and "y" in da.dims:
+        da = da.rename({"x": "sample", "y": "line"})
+
     # Compute contrast limits from a subsample for performance
     clim = _compute_clim(da, percentile_stretch)
 
@@ -97,7 +102,9 @@ def image_plot(
         plot_kwargs["width"] = width
         plot_kwargs["height"] = height
 
-    return da.hvplot.image(**plot_kwargs).opts(hooks=[_deduplicate_tools])
+    return da.hvplot.image(**plot_kwargs).opts(
+        hooks=[_deduplicate_tools], shared_axes=False,
+    )
 
 
 def image_pair_plot(

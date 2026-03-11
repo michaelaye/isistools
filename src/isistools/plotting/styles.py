@@ -12,26 +12,26 @@ from __future__ import annotations
 CNET_POINT_STYLES = {
     "registered": {
         "color": "#2ecc71",  # bright green — the main thing you want to see
-        "size": 8,
+        "size": 3,
         "alpha": 0.9,
-        "marker": "circle",
+        "marker": "cross",
         "line_color": "#27ae60",
         "line_width": 1,
     },
     "unregistered": {
         "color": "#e74c3c",  # red — needs attention but secondary
-        "size": 6,
-        "alpha": 0.7,
-        "marker": "triangle",
+        "size": 3,
+        "alpha": 0.8,
+        "marker": "cross",
         "line_color": "#c0392b",
         "line_width": 1,
     },
     "ignored": {
-        "color": "#95a5a6",  # gray — deliberately faded
+        "color": "red",  # prominent — QA flag
         "size": 4,
-        "alpha": 0.4,
-        "marker": "x",
-        "line_color": "#7f8c8d",
+        "alpha": 0.9,
+        "marker": "circle",
+        "line_color": "red",
         "line_width": 1,
     },
     "selected": {
