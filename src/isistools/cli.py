@@ -205,6 +205,172 @@ def footprintinit(
 
 
 @app.command()
+def spiceinit(
+    cubelist: Path = typer.Argument(
+        ..., help="Cube list file (one cube path per line)", exists=True,
+    ),
+    web: bool = typer.Option(
+        True, "--web/-W", "-w", help="Use web=yes for SPICE kernel retrieval (default: on)",
+    ),
+    jobs: int = typer.Option(
+        4, "--jobs", "-j", help="Number of parallel workers",
+    ),
+):
+    """Run ISIS spiceinit on all cubes in a list file."""
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from isistools.io.footprints import read_cube_list
+
+    cubes = read_cube_list(cubelist)
+    typer.echo(f"Running spiceinit on {len(cubes)} cubes ({jobs} workers)...")
+
+    def _run(cube: Path) -> tuple[Path, bool, str]:
+        cmd = ["spiceinit", f"from={cube}"]
+        if web:
+            cmd.append("web=yes")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        ok = result.returncode == 0
+        msg = result.stderr.strip() if not ok else ""
+        return cube, ok, msg
+
+    failed = []
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = {pool.submit(_run, c): c for c in cubes}
+        for future in as_completed(futures):
+            cube, ok, msg = future.result()
+            if ok:
+                typer.echo(f"  OK: {cube.name}")
+            else:
+                typer.echo(f"  FAIL: {cube.name} — {msg}")
+                failed.append(cube)
+
+    if failed:
+        typer.echo(f"\n{len(failed)}/{len(cubes)} failed.")
+        raise typer.Exit(1)
+    typer.echo(f"\nAll {len(cubes)} cubes done.")
+
+
+@app.command()
+def overlaps(
+    cubelist: Path = typer.Argument(
+        ..., help="Cube list file (one cube path per line)", exists=True,
+    ),
+    output: Optional[Path] = typer.Option(
+        None, "--output", "-o",
+        help="Output overlap list path (default: <cubelist_dir>/overlap_list.lis)",
+    ),
+    png: bool = typer.Option(
+        False, "--png", help="Save a PNG plot of the overlap polygons",
+    ),
+    png_path: Optional[Path] = typer.Option(
+        None, "--png-path", help="PNG output path (default: overlaps.png)",
+    ),
+    dpi: int = typer.Option(150, "--dpi", help="PNG resolution"),
+    gpkg: Optional[Path] = typer.Option(
+        None, "--gpkg", help="Export overlap polygons to GeoPackage",
+    ),
+):
+    """Run findimageoverlaps and extract overlap polygons as GeoDataFrame.
+
+    Runs ISIS findimageoverlaps, then parses the output into a GeoDataFrame
+    with polygon geometries for each overlap zone. Optionally exports to
+    GeoPackage or PNG.
+    """
+    import subprocess
+
+    from isistools.io.overlaps import parse_overlap_list
+
+    overlap_out = output or (cubelist.parent / "overlap_list.lis")
+
+    typer.echo(f"Running findimageoverlaps on {cubelist}...")
+    result = subprocess.run(
+        [
+            "findimageoverlaps",
+            f"fromlist={cubelist}",
+            f"overlaplist={overlap_out}",
+        ],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        typer.echo(f"ERROR: findimageoverlaps failed:\n{result.stderr}")
+        raise typer.Exit(1)
+
+    typer.echo(f"Overlap list written to: {overlap_out}")
+    typer.echo("Parsing overlap polygons...")
+
+    gdf = parse_overlap_list(overlap_out)
+
+    # Summary table
+    typer.echo(f"\n{'Zone':<50s} {'Type':<16s} {'Area (deg²)':<12s}")
+    typer.echo("-" * 78)
+    for _, row in gdf.iterrows():
+        serials = row["serials"]
+        # Truncate long serial strings
+        if len(serials) > 48:
+            serials = serials[:45] + "..."
+        typer.echo(f"{serials:<50s} {row['zone_type']:<16s} {row['area_deg2']:<12.6f}")
+
+    overlap_only = gdf[gdf["n_images"] >= 2]
+    typer.echo(f"\n{len(overlap_only)} overlap zones, "
+               f"{len(gdf) - len(overlap_only)} individual footprints")
+
+    if gpkg:
+        # Convert list column to string for GeoPackage compatibility
+        export = gdf.copy()
+        export["images"] = export["images"].apply(lambda x: ",".join(x))
+        export.to_file(gpkg, driver="GPKG")
+        typer.echo(f"Saved GeoPackage: {gpkg}")
+
+    if png or png_path:
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Patch
+
+        colors = {
+            "footprint": "#cccccc",
+            "2-way overlap": "#4a90d9",
+        }
+        # Catch N-way overlaps
+        default_overlap_color = "#e74c3c"
+
+        fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+
+        for _, row in gdf.iterrows():
+            zt = row["zone_type"]
+            color = colors.get(zt, default_overlap_color)
+            alpha = 0.3 if zt == "footprint" else 0.5
+            gpd.GeoDataFrame([row], geometry="geometry", crs="EPSG:4326").plot(
+                ax=ax, color=color, alpha=alpha, edgecolor="black", linewidth=0.8,
+            )
+            centroid = row.geometry.centroid
+            ax.annotate(
+                row["serials"].replace("MRO/CTX/", "").replace(",", "\n"),
+                xy=(centroid.x, centroid.y),
+                ha="center", va="center", fontsize=6,
+            )
+
+        handles = []
+        seen = set()
+        for _, row in gdf.iterrows():
+            zt = row["zone_type"]
+            if zt not in seen:
+                color = colors.get(zt, default_overlap_color)
+                handles.append(Patch(facecolor=color, alpha=0.5,
+                                     edgecolor="black", label=zt))
+                seen.add(zt)
+        ax.legend(handles=handles, loc="upper left")
+        ax.set_xlabel("Longitude (°E)")
+        ax.set_ylabel("Latitude (°N)")
+        ax.set_title(f"Overlap Zones — {cubelist.name}")
+        ax.set_aspect("equal")
+
+        out = png_path or Path("overlaps.png")
+        fig.savefig(out, dpi=dpi, bbox_inches="tight")
+        typer.echo(f"Saved PNG: {out}")
+        plt.close(fig)
+
+
+@app.command()
 def cnet_info(
     cnet: Path = typer.Argument(
         ..., help="Control network file (.net)", exists=True,
