@@ -18,6 +18,7 @@ book:
         - mosaic.qmd
         - tiepoints.qmd
         - cnet-info.qmd
+        - cam2map.qmd
     - part: "Reference"
       chapters:
         - python-api.qmd
