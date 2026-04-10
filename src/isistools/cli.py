@@ -1,19 +1,16 @@
 """Command-line interface for isistools.
 
-All commands launch Panel apps in the browser.
-
 Usage::
 
     isistools mosaic cubes.lis --cnet control.net
     isistools tiepoints cubes.lis control.net
     isistools footprints cubes.lis
+    isistools cam2map input.cub output.tif --map equi.map
 """
-
-from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Optional
 
 import typer
 
@@ -33,6 +30,7 @@ def _ensure_cwd() -> None:
     except FileNotFoundError:
         os.chdir(Path.home())
 
+
 app = typer.Typer(
     name="isistools",
     help="Python review tools for ISIS3 coregistration workflows.",
@@ -43,10 +41,15 @@ app = typer.Typer(
 @app.command()
 def mosaic(
     cubelist: Path = typer.Argument(
-        ..., help="Cube list file (one cube path per line)", exists=True,
+        ...,
+        help="Cube list file (one cube path per line)",
+        exists=True,
     ),
     cnet: Optional[Path] = typer.Option(
-        None, "--cnet", "-c", help="Control network file (.net)",
+        None,
+        "--cnet",
+        "-c",
+        help="Control network file (.net)",
     ),
     port: int = typer.Option(0, "--port", "-p", help="Server port (0=auto)"),
     no_browser: bool = typer.Option(False, "--no-browser", help="Don't open browser"),
@@ -64,10 +67,14 @@ def mosaic(
 @app.command()
 def tiepoints(
     cubelist: Path = typer.Argument(
-        ..., help="Cube list file", exists=True,
+        ...,
+        help="Cube list file",
+        exists=True,
     ),
     cnet: Path = typer.Argument(
-        ..., help="Control network file (.net)", exists=True,
+        ...,
+        help="Control network file (.net)",
+        exists=True,
     ),
     port: int = typer.Option(0, "--port", "-p", help="Server port (0=auto)"),
     no_browser: bool = typer.Option(False, "--no-browser", help="Don't open browser"),
@@ -85,23 +92,37 @@ def tiepoints(
 @app.command()
 def footprints(
     cubelist: Path = typer.Argument(
-        ..., help="Cube list file", exists=True,
+        ...,
+        help="Cube list file",
+        exists=True,
     ),
     cnet: Optional[Path] = typer.Option(
-        None, "--cnet", "-c", help="Optional control network overlay",
+        None,
+        "--cnet",
+        "-c",
+        help="Optional control network overlay",
     ),
     png: bool = typer.Option(
-        False, "--png", help="Save static PNG instead of launching viewer",
+        False,
+        "--png",
+        help="Save static PNG instead of launching viewer",
     ),
     png_path: Optional[Path] = typer.Option(
-        None, "--png-path", help="PNG output path (default: footprints_overview.png)",
+        None,
+        "--png-path",
+        help="PNG output path (default: footprints_overview.png)",
     ),
     dpi: int = typer.Option(150, "--dpi", help="PNG resolution (only with --png)"),
     title: Optional[str] = typer.Option(
-        None, "--title", "-t", help="Figure title (default: cubelist filename)",
+        None,
+        "--title",
+        "-t",
+        help="Figure title (default: cubelist filename)",
     ),
     win: bool = typer.Option(
-        False, "--win", help="Native matplotlib window instead of browser",
+        False,
+        "--win",
+        help="Native matplotlib window instead of browser",
     ),
     port: int = typer.Option(0, "--port", "-p", help="Server port (0=auto)"),
     no_browser: bool = typer.Option(False, "--no-browser", help="Don't open browser"),
@@ -149,24 +170,34 @@ def footprints(
                     if row["clock"]
                 }
             cnet_gdf = cnet_to_geodataframe(
-                cnet_df, cube_paths=cube_paths, clock_lookup=clock_lookup,
+                cnet_df,
+                cube_paths=cube_paths,
+                clock_lookup=clock_lookup,
             )
             plot = footprint_map_with_cnet(gdf, cnet_gdf)
         else:
             plot = footprint_map(gdf)
 
         pn.serve(
-            pn.pane.HoloViews(plot), port=port, show=not no_browser, title="Footprints",
+            pn.pane.HoloViews(plot),
+            port=port,
+            show=not no_browser,
+            title="Footprints",
         )
 
 
 @app.command()
 def footprintinit(
     cubelist: Path = typer.Argument(
-        ..., help="Cube list file (one cube path per line)", exists=True,
+        ...,
+        help="Cube list file (one cube path per line)",
+        exists=True,
     ),
     jobs: int = typer.Option(
-        4, "--jobs", "-j", help="Number of parallel workers",
+        4,
+        "--jobs",
+        "-j",
+        help="Number of parallel workers",
     ),
 ):
     """Run ISIS footprintinit on all cubes in a list file."""
@@ -181,7 +212,8 @@ def footprintinit(
     def _run(cube: Path) -> tuple[Path, bool, str]:
         result = subprocess.run(
             ["footprintinit", f"from={cube}"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         ok = result.returncode == 0
         msg = result.stderr.strip() if not ok else ""
@@ -207,13 +239,21 @@ def footprintinit(
 @app.command()
 def spiceinit(
     cubelist: Path = typer.Argument(
-        ..., help="Cube list file (one cube path per line)", exists=True,
+        ...,
+        help="Cube list file (one cube path per line)",
+        exists=True,
     ),
     web: bool = typer.Option(
-        True, "--web/-W", "-w", help="Use web=yes for SPICE kernel retrieval (default: on)",
+        True,
+        "--web/-W",
+        "-w",
+        help="Use web=yes for SPICE kernel retrieval (default: on)",
     ),
     jobs: int = typer.Option(
-        4, "--jobs", "-j", help="Number of parallel workers",
+        4,
+        "--jobs",
+        "-j",
+        help="Number of parallel workers",
     ),
 ):
     """Run ISIS spiceinit on all cubes in a list file."""
@@ -254,21 +294,31 @@ def spiceinit(
 @app.command()
 def overlaps(
     cubelist: Path = typer.Argument(
-        ..., help="Cube list file (one cube path per line)", exists=True,
+        ...,
+        help="Cube list file (one cube path per line)",
+        exists=True,
     ),
     output: Optional[Path] = typer.Option(
-        None, "--output", "-o",
+        None,
+        "--output",
+        "-o",
         help="Output overlap list path (default: <cubelist_dir>/overlap_list.lis)",
     ),
     png: bool = typer.Option(
-        False, "--png", help="Save a PNG plot of the overlap polygons",
+        False,
+        "--png",
+        help="Save a PNG plot of the overlap polygons",
     ),
     png_path: Optional[Path] = typer.Option(
-        None, "--png-path", help="PNG output path (default: overlaps.png)",
+        None,
+        "--png-path",
+        help="PNG output path (default: overlaps.png)",
     ),
     dpi: int = typer.Option(150, "--dpi", help="PNG resolution"),
     gpkg: Optional[Path] = typer.Option(
-        None, "--gpkg", help="Export overlap polygons to GeoPackage",
+        None,
+        "--gpkg",
+        help="Export overlap polygons to GeoPackage",
     ),
 ):
     """Run findimageoverlaps and extract overlap polygons as GeoDataFrame.
@@ -290,7 +340,8 @@ def overlaps(
             f"fromlist={cubelist}",
             f"overlaplist={overlap_out}",
         ],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         typer.echo(f"ERROR: findimageoverlaps failed:\n{result.stderr}")
@@ -312,8 +363,10 @@ def overlaps(
         typer.echo(f"{serials:<50s} {row['zone_type']:<16s} {row['area_deg2']:<12.6f}")
 
     overlap_only = gdf[gdf["n_images"] >= 2]
-    typer.echo(f"\n{len(overlap_only)} overlap zones, "
-               f"{len(gdf) - len(overlap_only)} individual footprints")
+    typer.echo(
+        f"\n{len(overlap_only)} overlap zones, "
+        f"{len(gdf) - len(overlap_only)} individual footprints"
+    )
 
     if gpkg:
         # Convert list column to string for GeoPackage compatibility
@@ -340,13 +393,19 @@ def overlaps(
             color = colors.get(zt, default_overlap_color)
             alpha = 0.3 if zt == "footprint" else 0.5
             gpd.GeoDataFrame([row], geometry="geometry", crs="EPSG:4326").plot(
-                ax=ax, color=color, alpha=alpha, edgecolor="black", linewidth=0.8,
+                ax=ax,
+                color=color,
+                alpha=alpha,
+                edgecolor="black",
+                linewidth=0.8,
             )
             centroid = row.geometry.centroid
             ax.annotate(
                 row["serials"].replace("MRO/CTX/", "").replace(",", "\n"),
                 xy=(centroid.x, centroid.y),
-                ha="center", va="center", fontsize=6,
+                ha="center",
+                va="center",
+                fontsize=6,
             )
 
         handles = []
@@ -355,8 +414,7 @@ def overlaps(
             zt = row["zone_type"]
             if zt not in seen:
                 color = colors.get(zt, default_overlap_color)
-                handles.append(Patch(facecolor=color, alpha=0.5,
-                                     edgecolor="black", label=zt))
+                handles.append(Patch(facecolor=color, alpha=0.5, edgecolor="black", label=zt))
                 seen.add(zt)
         ax.legend(handles=handles, loc="upper left")
         ax.set_xlabel("Longitude (°E)")
@@ -373,7 +431,9 @@ def overlaps(
 @app.command()
 def cnet_info(
     cnet: Path = typer.Argument(
-        ..., help="Control network file (.net)", exists=True,
+        ...,
+        help="Control network file (.net)",
+        exists=True,
     ),
 ):
     """Print control network summary statistics."""
@@ -391,6 +451,189 @@ def cnet_info(
     typer.echo(f"  Ignored:       {stats['n_ignored']}")
     typer.echo(f"  Mean Residual: {stats['mean_residual']:.4f}")
     typer.echo(f"  Max Residual:  {stats['max_residual']:.4f}")
+
+
+@app.command()
+def cam2map(
+    from_cube: Annotated[
+        Path,
+        typer.Argument(help="Input spiceinit'd ISIS cube.", exists=True),
+    ],
+    to: Annotated[
+        Path,
+        typer.Argument(help="Output file path (.tif for GeoTIFF)."),
+    ],
+    map: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--map", help="ISIS MAP PVL file defining projection/resolution/range.", exists=True
+        ),
+    ] = None,
+    projection: Annotated[
+        Optional[str],
+        typer.Option("--projection", help="PROJ string (default: equirectangular)."),
+    ] = None,
+    resolution: Annotated[
+        Optional[float],
+        typer.Option("--resolution", "-r", help="Pixel resolution in meters/pixel."),
+    ] = None,
+    minlat: Annotated[
+        Optional[float],
+        typer.Option("--minlat", help="Minimum latitude (degrees)."),
+    ] = None,
+    maxlat: Annotated[
+        Optional[float],
+        typer.Option("--maxlat", help="Maximum latitude (degrees)."),
+    ] = None,
+    minlon: Annotated[
+        Optional[float],
+        typer.Option("--minlon", help="Minimum longitude (degrees)."),
+    ] = None,
+    maxlon: Annotated[
+        Optional[float],
+        typer.Option("--maxlon", help="Maximum longitude (degrees)."),
+    ] = None,
+    step: Annotated[
+        int,
+        typer.Option("--step", "-s", help="Coarse grid step (pixels). Smaller=more accurate."),
+    ] = 16,
+    dense: Annotated[
+        bool,
+        typer.Option("--dense", help="Evaluate CSM at every pixel (slow, for validation)."),
+    ] = False,
+    validate: Annotated[
+        bool,
+        typer.Option("--validate", help="Spot-check coarse transform accuracy."),
+    ] = False,
+    clip_to_footprint: Annotated[
+        bool,
+        typer.Option(
+            "--clip-to-footprint",
+            help="Clip output to the footprint polygon stored by footprintinit "
+            "(ISIS cam2map compatibility mode). Default: full camera coverage.",
+        ),
+    ] = False,
+    interp: Annotated[
+        str,
+        typer.Option("--interp", "-i", help="Interpolation: nearest, bilinear, bicubic."),
+    ] = "bicubic",
+):
+    """Map-project an ISIS cube using a CSM camera model (cam2map replacement).
+
+    By default produces MORE coverage than ISIS cam2map because it uses the
+    true camera model instead of the coarse footprint polygon from
+    footprintinit. Use --clip-to-footprint for exact ISIS compatibility.
+
+    \b
+    Examples:
+      isistools cam2map input.cub output.tif --map equi.map
+      isistools cam2map input.cub output.tif -r 6.0
+      isistools cam2map input.cub output.tif --map equi.map --dense --validate
+      isistools cam2map input.cub output.tif --map equi.map --clip-to-footprint
+    """
+    try:
+        from isistools.processing.project import project
+        from isistools.processing.resample import Interpolation
+    except ImportError as e:
+        typer.echo(f"cam2map requires extra dependencies: pip install isistools[csm]\n{e}")
+        raise typer.Exit(1) from None
+
+    lat_range = None
+    if minlat is not None and maxlat is not None:
+        lat_range = (minlat, maxlat)
+
+    lon_range = None
+    if minlon is not None and maxlon is not None:
+        lon_range = (minlon, maxlon)
+
+    interp_map = {
+        "nearest": Interpolation.NEAREST,
+        "bilinear": Interpolation.BILINEAR,
+        "bicubic": Interpolation.BICUBIC,
+    }
+    interpolation = interp_map.get(interp.lower(), Interpolation.BICUBIC)
+
+    project(
+        input_cube=from_cube,
+        output_path=to,
+        map_file=map,
+        projection=projection,
+        resolution=resolution,
+        lat_range=lat_range,
+        lon_range=lon_range,
+        coarse_step=step,
+        dense=dense,
+        validate=validate,
+        clip_to_footprint=clip_to_footprint,
+        interpolation=interpolation,
+    )
+
+
+@app.command()
+def cam2map_compare(
+    isis_projected: Annotated[
+        Path,
+        typer.Argument(help="ISIS cam2map output cube.", exists=True),
+    ],
+    csm_projected: Annotated[
+        Path,
+        typer.Argument(help="csm-cam2map output GeoTIFF.", exists=True),
+    ],
+):
+    """Compare ISIS cam2map output with csm-cam2map output.
+
+    Reports pixel-level difference statistics for validation.
+    """
+    import numpy as np
+    import rasterio
+    from rich.console import Console
+
+    from isistools.io.cubes import read_isis_cube_raw
+
+    console = Console()
+
+    console.print("[bold]Loading ISIS projected cube[/bold]")
+    isis_data, _ = read_isis_cube_raw(isis_projected)
+
+    console.print("[bold]Loading CSM projected GeoTIFF[/bold]")
+    with rasterio.open(str(csm_projected)) as src:
+        csm_data = src.read(1).astype(np.float32)
+
+    # Check shapes
+    if isis_data.shape != csm_data.shape:
+        console.print(f"[red]Shape mismatch: ISIS {isis_data.shape} vs CSM {csm_data.shape}[/red]")
+        console.print("Comparison requires matching grid parameters.")
+        raise typer.Exit(1)
+
+    # Compare only where both have valid data
+    isis_valid = np.isfinite(isis_data) & (isis_data != 0)
+    csm_valid = np.isfinite(csm_data) & (csm_data != 0)
+    both_valid = isis_valid & csm_valid
+
+    n_both = int(np.sum(both_valid))
+    n_isis_only = int(np.sum(isis_valid & ~csm_valid))
+    n_csm_only = int(np.sum(csm_valid & ~isis_valid))
+
+    console.print(f"\n  Both valid: {n_both:,}")
+    console.print(f"  ISIS-only:  {n_isis_only:,}")
+    console.print(f"  CSM-only:   {n_csm_only:,}")
+
+    if n_both == 0:
+        console.print("[red]No overlapping valid pixels![/red]")
+        raise typer.Exit(1)
+
+    diff = csm_data[both_valid] - isis_data[both_valid]
+    console.print("\n  [bold]Difference statistics (CSM - ISIS):[/bold]")
+    console.print(f"  Mean:   {np.mean(diff):.4f}")
+    console.print(f"  Median: {np.median(diff):.4f}")
+    console.print(f"  Std:    {np.std(diff):.4f}")
+    console.print(f"  Min:    {np.min(diff):.4f}")
+    console.print(f"  Max:    {np.max(diff):.4f}")
+
+    # Percentage of pixels within DN thresholds
+    for threshold in [0.01, 0.1, 1.0, 5.0]:
+        pct = 100 * np.sum(np.abs(diff) < threshold) / n_both
+        console.print(f"  |diff| < {threshold}: {pct:.1f}%")
 
 
 if __name__ == "__main__":

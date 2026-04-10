@@ -8,9 +8,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pvl
 import rioxarray  # noqa: F401 — registers the .rio accessor
 import xarray as xr
+
+# ISIS special pixel constants (IEEE 754 representations).
+# Any float32 value <= ISIS_NULL is a special pixel.
+ISIS_NULL = np.float32(-3.4028226550889045e38)
+ISIS_LRS = np.float32(-3.4028228579130005e38)
+ISIS_LIS = np.float32(-3.4028230607370965e38)
+ISIS_HRS = np.float32(-3.4028232635611926e38)
+ISIS_HIS = np.float32(-3.4028234663852886e38)
 
 
 def read_label(cube_path: str | Path) -> pvl.PVLModule:
@@ -122,8 +131,7 @@ def build_serial_lookup(
             label = pvl.load(str(cp))
             inst = label["IsisCube"]["Instrument"]
             clock = str(
-                inst.get("SpacecraftClockCount",
-                         inst.get("SpacecraftClockStartCount", ""))
+                inst.get("SpacecraftClockCount", inst.get("SpacecraftClockStartCount", ""))
             )
             if clock:
                 clock_to_path[clock] = cp
@@ -176,3 +184,86 @@ def get_serial_number(label: pvl.PVLModule) -> str:
     start_time = inst.get("StartTime", inst.get("SpacecraftClockStartCount", "Unknown"))
 
     return f"{spacecraft}/{instrument_id}/{start_time}"
+
+
+def _mask_special_pixels(data: np.ndarray) -> None:
+    """Replace ISIS special pixel values with NaN, in place."""
+    data[data <= np.float32(-3.4028226e38)] = np.nan
+
+
+def read_isis_cube_raw(cube_path: str | Path) -> tuple[np.ndarray, pvl.PVLModule]:
+    """Read raw pixel data and metadata from an ISIS cube.
+
+    Unlike :func:`load_cube` which returns an xarray DataArray via GDAL,
+    this reads the binary pixel data directly using numpy. This is used
+    by the cam2map processing pipeline where direct array access and
+    explicit special-pixel handling are needed.
+
+    Parameters
+    ----------
+    cube_path : path-like
+        Path to an ISIS .cub file.
+
+    Returns
+    -------
+    data : ndarray, shape (n_lines, n_samples) or (n_bands, n_lines, n_samples)
+        Pixel values as float32. ISIS special pixels are converted to NaN.
+    label : pvl.PVLModule
+        Parsed PVL label.
+    """
+    cube_path = Path(cube_path)
+    label = read_label(cube_path)
+
+    core = label["IsisCube"]["Core"]
+    dims = core["Dimensions"]
+    n_samples = int(dims["Samples"])
+    n_lines = int(dims["Lines"])
+    n_bands = int(dims["Bands"])
+
+    fmt = str(core.get("Format", "BandSequential"))
+
+    # For Tile format, use rasterio/GDAL which handles ISIS3 tiling correctly.
+    # For BandSequential, reading raw via np.fromfile is faster and avoids the
+    # GDAL dependency for that path.
+    if fmt.lower() == "tile":
+        import rasterio
+
+        with rasterio.open(str(cube_path)) as src:
+            data = src.read().astype(np.float32)
+            # rasterio returns (bands, rows, cols) which matches our layout
+    else:
+        pixels = core["Pixels"]
+        ptype = str(pixels["Type"]).lower()
+        byte_order = str(pixels.get("ByteOrder", "Lsb")).lower()
+
+        dtype_map = {
+            "real": np.float32,
+            "signedword": np.int16,
+            "unsignedbyte": np.uint8,
+            "double": np.float64,
+        }
+        if ptype not in dtype_map:
+            msg = f"Unsupported ISIS pixel type: {ptype}"
+            raise ValueError(msg)
+
+        np_dtype = dtype_map[ptype]
+        endian = "<" if byte_order == "lsb" else ">"
+        dt = np.dtype(np_dtype).newbyteorder(endian)
+
+        # ISIS StartByte is 1-based
+        start_byte = int(core["StartByte"]) - 1
+
+        data = np.fromfile(
+            str(cube_path),
+            dtype=dt,
+            count=n_bands * n_lines * n_samples,
+            offset=start_byte,
+        )
+        data = data.reshape(n_bands, n_lines, n_samples).astype(np.float32)
+
+    _mask_special_pixels(data)
+
+    if n_bands == 1:
+        data = data[0]
+
+    return data, label
