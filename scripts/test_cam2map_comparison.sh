@@ -18,6 +18,16 @@
 
 set -euo pipefail
 
+# ---------- Sandbox workaround ----------
+# Claude Code's sandbox on macOS sets RLIMIT_NOFILE to INT64_MAX, which breaks
+# ISIS 9.0.0's CubeManager cache sizing (`p_maxOpenFiles = rlim_cur * 0.60`).
+# The overflowed cache limit causes a Qt QList corruption that manifests as
+# SIGSEGV in _platform_memmove$VARIANT$Rosetta during DemShape construction.
+# Setting a sane file descriptor limit fixes every camera-loading ISIS tool
+# (cam2map, campt, camrange, caminfo, etc.) and produces output that is
+# bit-identical to the same command run from a normal terminal.
+ulimit -n 4096
+
 # ---------- Configuration ----------
 CUBE="/Users/maye/planetarypy_data/missions/mro/ctx/mrox_2774/J08_048038_1842_XN_04N287W/J08_048038_1842_XN_04N287W.lev1.cub"
 OUTDIR="/tmp/cam2map_comparison"
