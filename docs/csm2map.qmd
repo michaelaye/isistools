@@ -15,8 +15,16 @@ By default `csm2map` reads the cube's `Kernels.ShapeModel` keyword and
 uses the same DEM that ISIS would (e.g. the MOLA DEM for Mars), so the
 two tools produce essentially the same valid-pixel mask out of the box.
 Use `--shape-model ellipsoid` to disable DEM lookups (faster but less
-accurate over topography), or `--clip-to-footprint` for an additional
-exact-match mode that clips to the polygon stored by `footprintinit`.
+accurate over topography).
+
+`--clip-to-footprint` is also available but serves a different purpose
+than its name might suggest: it applies an *extra* mask from the
+`footprintinit` polygon on top of the camera-model mask. It does **not**
+reproduce ISIS `cam2map` behavior — empirical testing (see
+[§ The footprintinit polygon precision story](#the-footprintinit-polygon-precision-story)
+below) showed that `cam2map` ignores the polygon entirely. The flag is
+kept as an escape hatch for downstream tooling that expects a
+polygon-masked output for reasons unrelated to ISIS matching.
 
 ## Installation
 
@@ -104,7 +112,8 @@ isistools csm2map input.cub output.tif --map equi.map --dense
 # Validate coarse-grid accuracy against dense ground truth
 isistools csm2map input.cub output.tif --map equi.map --validate
 
-# Match ISIS cam2map exactly by clipping to footprint polygon
+# Apply an extra footprint-polygon mask (does NOT match cam2map —
+# see the "footprintinit polygon precision story" section below)
 isistools csm2map input.cub output.tif --map equi.map --clip-to-footprint
 
 # Compare our output to an existing ISIS cam2map cube
@@ -122,7 +131,7 @@ isistools csm2map-compare isis_output.cub csm_output.tif
 | `--step`, `-s` | 16 | Coarse grid step in pixels |
 | `--dense` | off | Evaluate CSM at every output pixel |
 | `--validate` | off | Spot-check coarse transform accuracy |
-| `--clip-to-footprint` | off | Additionally clip to the cube's footprint polygon (rarely needed) |
+| `--clip-to-footprint` | off | Apply an extra footprintinit-polygon mask. **Does not match cam2map** — cam2map ignores the polygon. Escape hatch for downstream polygon-masked outputs. |
 | `--shape-model` | `auto` | `auto` reads from cube label, `ellipsoid` disables DEM, or path to a DEM cube |
 | `--interp`, `-i` | bicubic | Interpolation: `nearest`, `bilinear`, `bicubic` |
 
@@ -151,16 +160,21 @@ The pipeline has five stages:
 With the default `--shape-model auto` (i.e. read the DEM from the
 cube label, matching ISIS), `csm2map` already matches ISIS `cam2map`
 to **99.95% coverage and 100% of overlapping pixels within 0.01 DN**.
-You typically don't need any extra flag.
+You typically don't need any extra flag. The residual ~14–18 K
+disagreeing pixels are a structural camera-model floor and are
+**not** resolvable by clipping to a polygon — see the next section
+for why.
 
-For the rare case where you want pixel-perfect agreement against an
-existing ISIS output (validation, regression testing, slotting into a
-bit-identical pipeline position), use `--clip-to-footprint`. It reads
-the footprint polygon stored in the cube by `footprintinit` and uses
-it as a hard mask on top of the camera-based valid region. This
-trades the ~14 K residual edge disagreement for ~10 K disagreement of
-a different shape — barely worth it in absolute terms, but useful if
-your downstream tooling expects the polygon-shaped mask exactly.
+`--clip-to-footprint` does not help close that gap. It applies an
+extra mask from the `footprintinit` polygon on top of the camera
+model, which can only *remove* valid pixels that were otherwise
+correctly projected. The flag predates the empirical investigation
+described in the next section, which showed that ISIS `cam2map`
+ignores the polygon entirely. We kept it as an escape hatch for
+users who want a polygon-masked output for reasons unrelated to
+matching `cam2map` — e.g. downstream pipelines that expect exactly
+the `footprintinit` polygon shape — but it is not recommended for
+validation or regression testing against `cam2map`.
 
 Validation across two MRO CTX cubes (different orbits, regions and
 aspect ratios), both with the MOLA DEM as shape model, against ISIS
@@ -267,11 +281,14 @@ the same output. `footprintinit` is required for the *other*
 downstream tools (`qmos`, `findimageoverlaps`, `autoseed`,
 `isistools footprints`) that consume the polygon directly.
 
-The `--clip-to-footprint` flag in `csm2map` is therefore only useful
-for the narrow case where you want to validate against the exact
-polygon-shaped mask `footprintinit` produced — you generally don't
-need it because the DEM-aware CSM camera arrives at essentially the
-same boundary on its own.
+The `--clip-to-footprint` flag in `csm2map` therefore does **not**
+help validate against `cam2map` — `cam2map` and the polygon are
+independent, and the flag simply ANDs an extra polygon mask onto the
+camera-model mask. For all ISIS-matching use cases the default
+(DEM-aware CSM camera, no polygon clipping) is what you want. The
+flag is retained only for the narrow escape-hatch use case of
+downstream tooling that explicitly expects the `footprintinit`
+polygon as an output mask shape.
 
 ### How footprintinit samples the image perimeter
 

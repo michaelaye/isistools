@@ -83,11 +83,17 @@ def project(
     validate : bool
         If True, spot-check the coarse transform against dense evaluation.
     clip_to_footprint : bool
-        If True, clip output to the footprint polygon stored in the cube
-        by ``footprintinit``. This reproduces ISIS cam2map's behavior but
-        inherits ``footprintinit``'s precision limits. Default False -
-        our camera-model-based mask is more accurate than the polygon.
-        Use this flag only when comparing against ISIS cam2map output.
+        If True, apply an extra mask from the footprint polygon stored in
+        the cube by ``footprintinit``. This does NOT reproduce ISIS
+        ``cam2map`` behavior — empirical testing (see
+        ``docs/csm2map-design.md``) showed that ``cam2map`` ignores the
+        polygon entirely; its output is determined purely by the camera
+        model and shape model. The polygon mask is therefore strictly
+        *additional* to our camera-model mask and can only remove valid
+        pixels that were otherwise correctly projected. Kept as an
+        escape hatch for callers who want a polygon-clipped output for
+        their own downstream reasons; not recommended for comparison
+        against ``cam2map``. Default False.
     shape_model : str, Path, "auto", "ellipsoid", or None
         Shape model used for the body's local radius:
           - ``"auto"`` (default): read ``Kernels.ShapeModel`` from the
@@ -210,9 +216,15 @@ def project(
                 dem_sampler=dem_sampler,
             )
 
-    # Step 4b: Optional footprint-polygon clipping (ISIS cam2map compat mode)
+    # Step 4b: Optional extra footprint-polygon mask. NOTE: this is NOT
+    # what ISIS cam2map does — cam2map ignores the polygon entirely.
+    # The flag is kept as an escape hatch for downstream callers that
+    # want a polygon-masked output for their own reasons.
     if clip_to_footprint:
-        console.print("[bold]Clipping to footprint polygon[/bold] (ISIS compat mode)")
+        console.print(
+            "[bold]Applying extra footprint-polygon mask[/bold] "
+            "(note: cam2map does not use the polygon)"
+        )
         polygon_mask = _rasterize_footprint(input_cube, grid)
         coord_map.valid &= polygon_mask
 
@@ -277,8 +289,13 @@ def _rasterize_footprint(input_cube: Path, grid: OutputGrid) -> np.ndarray:
     """Rasterize the cube's footprint polygon onto the output grid.
 
     Reads the footprint polygon stored in the cube (by ``footprintinit``)
-    and returns a boolean mask with True inside the polygon. This matches
-    ISIS cam2map's behavior of clipping output to the stored footprint.
+    and returns a boolean mask with True inside the polygon.
+
+    Note: this mask is NOT used to reproduce ISIS ``cam2map`` behavior.
+    Empirical testing (see ``docs/csm2map-design.md``) showed that
+    ``cam2map`` ignores the polygon entirely. This helper is only invoked
+    when the user explicitly passes ``--clip-to-footprint`` as an escape
+    hatch for downstream polygon-masked outputs.
 
     Parameters
     ----------

@@ -495,6 +495,27 @@ Performance headroom not yet used:
    we currently trust the MAP file. This hasn't bitten us on CTX
    because the MAP files are always planetocentric but it's a
    latent bug waiting for a planetographic MAP input.
+7. **`--clip-to-footprint` does not match ISIS `cam2map`** (historical
+   note — the flag was added under a hypothesis that turned out to
+   be wrong). Early in development we saw a ~3% coverage gap vs
+   `cam2map` and observed that ~99.7% of the excess pixels sat
+   outside the `footprintinit` polygon stored in the cube. We added
+   `--clip-to-footprint` on the working assumption that `cam2map`
+   was internally clipping to that polygon. A later direct source
+   read of ISIS 9.0.0 `cam2map.cpp` showed no reference to any
+   polygon at all, and an empirical test (stripping the polygon
+   from the cube and re-running `cam2map`) produced bit-identical
+   output to the unmodified run. The original coverage gap was
+   actually an ellipsoid-vs-DEM shape model difference; once we
+   integrated MOLA as the default shape model, the gap closed to
+   99.95% **without any polygon clipping**. The flag is retained in
+   0.7.x only as an escape hatch for downstream tooling that wants
+   a polygon-shaped output mask; it is explicitly *not* a
+   compatibility mode for `cam2map`. See `docs/csm2map.qmd §
+   "The footprintinit polygon precision story"` for the full
+   narrative; it's worth including in the paper as a concrete
+   example of a hypothesis-test-reject debugging loop during
+   validation.
 
 ## 7. Non-goals
 

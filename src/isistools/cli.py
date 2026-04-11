@@ -517,8 +517,10 @@ def csm2map(
         bool,
         typer.Option(
             "--clip-to-footprint",
-            help="Clip output to the footprint polygon stored by footprintinit "
-            "(ISIS cam2map compatibility mode). Default: full camera coverage.",
+            help="Apply an extra mask from the footprint polygon stored by "
+            "footprintinit. This does NOT reproduce ISIS cam2map behavior — "
+            "cam2map ignores the polygon entirely. Use only if you want a "
+            "polygon-clipped output for your own downstream reasons.",
         ),
     ] = False,
     shape_model: Annotated[
@@ -550,20 +552,22 @@ def csm2map(
 ):
     """Map-project an ISIS cube using a CSM camera model (ISIS cam2map replacement).
 
-    By default produces MORE coverage than ISIS cam2map because it uses the
-    true camera model instead of the coarse footprint polygon from
-    footprintinit. Use --clip-to-footprint for exact ISIS compatibility.
-
     By default the shape model is read from the cube label, matching ISIS
     cam2map. Use --shape-model ellipsoid to disable DEM lookups (faster but
     less accurate over topography), or --shape-model PATH to use a custom DEM.
+
+    The --clip-to-footprint flag applies an EXTRA mask from the footprint
+    polygon stored by footprintinit. It does NOT reproduce ISIS cam2map
+    behavior — cam2map ignores the polygon entirely (empirically verified;
+    see docs/csm2map-design.md). The flag is kept as an escape hatch for
+    users who want a polygon-clipped output for downstream reasons
+    unrelated to ISIS matching.
 
     \b
     Examples:
       isistools csm2map input.cub output.tif --map equi.map
       isistools csm2map input.cub output.tif -r 6.0
       isistools csm2map input.cub output.tif --map equi.map --dense --validate
-      isistools csm2map input.cub output.tif --map equi.map --clip-to-footprint
       isistools csm2map input.cub output.tif --map equi.map --shape-model ellipsoid
     """
     try:
