@@ -1,12 +1,11 @@
 #!/bin/bash
-# Compare ISIS cam2map vs isistools CSM-based cam2map on a small CTX image.
+# Compare ISIS cam2map vs isistools csm2map on a CTX image.
 #
 # This script runs in two phases:
-#   Phase 1 (ISIS): cam2map + camrange (needs ISIS conda env)
-#   Phase 2 (CSM):  isistools cam2map + comparison (needs CSM deps)
+#   Phase 1 (ISIS):     cam2map + camrange (needs ISIS conda env)
+#   Phase 2 (isistools): csm2map + comparison (needs CSM deps)
 #
-# The ISIS env currently has ale but is missing: csmapi, knoten, usgscsm,
-# rasterio, rich. Install them first:
+# The ISIS env needs the CSM stack alongside ISIS itself:
 #
 #   conda activate isis
 #   conda install -c conda-forge usgscsm ale rasterio rich
@@ -14,7 +13,7 @@
 #
 # Then run:
 #   conda activate isis
-#   bash scripts/test_cam2map_comparison.sh
+#   bash scripts/test_csm2map_comparison.sh
 
 set -euo pipefail
 
@@ -30,17 +29,17 @@ ulimit -n 4096
 
 # ---------- Configuration ----------
 CUBE="/Users/maye/planetarypy_data/missions/mro/ctx/mrox_2774/J08_048038_1842_XN_04N287W/J08_048038_1842_XN_04N287W.lev1.cub"
-OUTDIR="/tmp/cam2map_comparison"
+OUTDIR="/tmp/csm2map_comparison"
 RESOLUTION=6.0  # meters/pixel
 
 ISIS_OUTPUT="$OUTDIR/J08_isis_cam2map.cub"
-CSM_OUTPUT="$OUTDIR/J08_csm_cam2map.tif"
+CSM_OUTPUT="$OUTDIR/J08_csm2map.tif"
 MAP_FILE="$OUTDIR/equirectangular.map"
 
 mkdir -p "$OUTDIR"
 
 echo "============================================================"
-echo "cam2map comparison test"
+echo "csm2map vs ISIS cam2map comparison"
 echo "  Cube: $(basename $CUBE)"
 echo "  Resolution: ${RESOLUTION} m/pix"
 echo "  Output dir: $OUTDIR"
@@ -105,39 +104,17 @@ echo "  Output: $ISIS_OUTPUT ($(du -h "$ISIS_OUTPUT" | cut -f1))"
 echo "  Output mapping:"
 catlab from="$ISIS_OUTPUT" | grep -A 20 "Group = Mapping" | head -25
 
-# ---------- Step 4: Run isistools CSM cam2map ----------
+# ---------- Step 4: Run isistools csm2map ----------
 echo ""
-echo "[Step 4] Running isistools CSM cam2map..."
+echo "[Step 4] Running isistools csm2map..."
 rm -f "$CSM_OUTPUT"
-time python3 -c "
-from isistools.processing.project import project
-from isistools.processing.resample import Interpolation
-
-project(
-    input_cube='$CUBE',
-    output_path='$CSM_OUTPUT',
-    map_file='$MAP_FILE',
-    interpolation=Interpolation.BICUBIC,
-)
-"
+time isistools csm2map "$CUBE" "$CSM_OUTPUT" --map "$MAP_FILE"
 echo "  Output: $CSM_OUTPUT ($(du -h "$CSM_OUTPUT" | cut -f1))"
 
 # ---------- Step 5: Compare ----------
 echo ""
 echo "[Step 5] Comparing outputs..."
-python3 -c "
-from isistools.cli import app
-from typer.testing import CliRunner
-
-runner = CliRunner()
-result = runner.invoke(app, ['cam2map-compare', '$ISIS_OUTPUT', '$CSM_OUTPUT'])
-print(result.output)
-if result.exit_code != 0:
-    print(f'Exit code: {result.exit_code}')
-    if result.exception:
-        import traceback
-        traceback.print_exception(type(result.exception), result.exception, result.exception.__traceback__)
-"
+isistools csm2map-compare "$ISIS_OUTPUT" "$CSM_OUTPUT"
 
 echo ""
 echo "============================================================"

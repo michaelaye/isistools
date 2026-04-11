@@ -196,7 +196,7 @@ def read_isis_cube_raw(cube_path: str | Path) -> tuple[np.ndarray, pvl.PVLModule
 
     Unlike :func:`load_cube` which returns an xarray DataArray via GDAL,
     this reads the binary pixel data directly using numpy. This is used
-    by the cam2map processing pipeline where direct array access and
+    by the csm2map processing pipeline where direct array access and
     explicit special-pixel handling are needed.
 
     Parameters

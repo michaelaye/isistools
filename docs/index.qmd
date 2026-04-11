@@ -31,8 +31,8 @@ isistools fixes all of these.
 | `isistools mosaic` | Mosaic review app (Qmos replacement) |
 | `isistools tiepoints` | Tie point review app (Qnet replacement) |
 | `isistools cnet-info` | Control network summary statistics |
-| `isistools cam2map` | CSM-based map projection (cam2map replacement) |
-| `isistools cam2map-compare` | Pixel-level comparison of two cam2map outputs |
+| `isistools csm2map` | CSM-based map projection (ISIS cam2map replacement) |
+| `isistools csm2map-compare` | Pixel-level comparison of csm2map vs ISIS cam2map outputs |
 
 ## Installation
 

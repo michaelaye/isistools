@@ -1,7 +1,7 @@
 # Why ~18K pixels still disagree (and why we can't fix it)
 
-After integrating the MOLA DEM as the shape model, our cam2map output
-matches ISIS cam2map's valid mask to 99.95% on the J08 CTX test cube,
+After integrating the MOLA DEM as the shape model, our `csm2map` output
+matches ISIS `cam2map`'s valid mask to 99.95% on the J08 CTX test cube,
 with all overlapping pixels agreeing to within 0.01 DN. The remaining
 ~18K disagreement is **a structural floor between CSM
 `UsgsAstroLineScanSensorModel` and ISIS `CTXCamera`** and is not fixable
@@ -9,7 +9,7 @@ without using ISIS's actual camera model.
 
 ## What "disagreement" means
 
-After cam2map, every output pixel falls into one of four buckets:
+After running both tools, every output pixel falls into one of four buckets:
 
 |              | ISIS valid | ISIS NULL |
 |--------------|------------|-----------|
@@ -122,7 +122,7 @@ Both runs were against ISIS 9.0.0 cam2map under the sandbox via
 | Metric                  | J08 (2536×12288) | F09 (5000×7168)  |
 |-------------------------|------------------|------------------|
 | ISIS cam2map wall time  | 64.64 s          | 73.74 s          |
-| CSM cam2map wall time   | 12.14 s          | 11.36 s          |
+| isistools csm2map time  | 12.14 s          | 11.36 s          |
 | Speedup                 | 5.32×            | 6.49×            |
 | Output dims             | 12431 × 3733     | 7635 × 5240      |
 | ISIS valid              | 27,371,919       | 31,483,792       |

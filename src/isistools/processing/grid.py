@@ -1,7 +1,7 @@
 """Define the output map-projected grid.
 
 Supports two modes:
-1. From an ISIS MAP PVL file (for cam2map compatibility)
+1. From an ISIS MAP PVL file (for ISIS cam2map compatibility)
 2. From explicit projection + resolution + bounds parameters
 
 The grid is defined as a rasterio-compatible affine transform + CRS + shape.
@@ -115,9 +115,7 @@ def grid_from_map_file(
     # If the MAP file includes an explicit UpperLeftCorner with Samples/Lines
     # (e.g. from an existing ISIS output cube), honor it verbatim. This
     # guarantees pixel-perfect grid alignment when replicating an ISIS run.
-    has_upper_left = all(
-        k in mapping for k in ("UpperLeftCornerX", "UpperLeftCornerY")
-    )
+    has_upper_left = all(k in mapping for k in ("UpperLeftCornerX", "UpperLeftCornerY"))
     core = label.get("Core") if isinstance(label, dict) or hasattr(label, "get") else None
     n_samples = None
     n_lines = None
@@ -137,9 +135,14 @@ def grid_from_map_file(
         lon_max = float(mapping.get("MaximumLongitude", 0.0))
 
         import rasterio.transform
+
         transform = rasterio.transform.Affine(
-            res, 0.0, x_ul,
-            0.0, -res, y_ul,
+            res,
+            0.0,
+            x_ul,
+            0.0,
+            -res,
+            y_ul,
         )
         return OutputGrid(
             crs=crs,
@@ -233,8 +236,12 @@ def grid_from_params(
     # Affine: pixel (0,0) has its upper-left corner at (x_min, y_max).
     # Build transform explicitly to avoid rasterio recomputing pixel size.
     transform = rasterio.transform.Affine(
-        resolution, 0.0, x_min,
-        0.0, -resolution, y_max,
+        resolution,
+        0.0,
+        x_min,
+        0.0,
+        -resolution,
+        y_max,
     )
 
     return OutputGrid(

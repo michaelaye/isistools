@@ -1,4 +1,4 @@
-"""Tests for the cam2map processing pipeline.
+"""Tests for the csm2map processing pipeline.
 
 Unit tests for grid, resample, and special pixel handling run without
 CSM/ale dependencies. Integration tests that need real data are marked

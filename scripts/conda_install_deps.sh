@@ -31,7 +31,7 @@ CORE=(
     diskcache
 )
 
-# CSM deps (cam2map)
+# CSM deps (csm2map)
 CSM=(
     usgscsm
     ale

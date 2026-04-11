@@ -1,4 +1,4 @@
-"""Main cam2map pipeline: orchestrate camera, grid, transform, resample, I/O."""
+"""Main csm2map pipeline: orchestrate camera, grid, transform, resample, I/O."""
 
 from pathlib import Path
 from typing import Literal
@@ -51,7 +51,7 @@ def project(
     output_path : path-like
         Output file path.
     map_file : path-like, optional
-        ISIS MAP file for grid definition (cam2map-compatible).
+        ISIS MAP file for grid definition (ISIS cam2map-compatible).
     projection : str, optional
         PROJ string or projection name (if not using map_file).
     resolution : float, optional

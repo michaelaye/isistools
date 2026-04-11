@@ -41,7 +41,7 @@ Changelog = "https://github.com/michaelaye/isistools/blob/main/CHANGELOG.md"
 Issues = "https://github.com/michaelaye/isistools/issues"
 
 [project.optional-dependencies]
-## CSM deps (cam2map) — install via conda, not pip:
+## CSM deps (csm2map) — install via conda, not pip:
 ##   conda install -c conda-forge usgscsm ale rasterio rich
 csm = [
     "scipy>=1.10",

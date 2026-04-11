@@ -1,14 +1,13 @@
 ---
-title: "cam2map"
+title: "csm2map"
 ---
 
 ## Purpose
 
 Map-project an ISIS cube into a GeoTIFF using the Community Sensor Model
-(CSM) instead of ISIS's CSPICE-based camera. This is a drop-in replacement
-for ISIS `cam2map` that produces pixel-accurate results on typical CTX
-inputs — validated at **100% agreement within 0.01 DN** against ISIS
-output.
+(CSM) instead of ISIS's CSPICE-based camera. Drop-in replacement for
+ISIS `cam2map`, validated at **100% agreement within 0.01 DN** against
+ISIS output on CTX.
 
 By default it produces **more coverage than ISIS** (~3% more valid pixels
 on a CTX image) because it uses the true camera model per output pixel
@@ -19,22 +18,22 @@ instead of clipping to the cube's stored footprint polygon. See
 
 ```bash
 # Basic: use an ISIS MAP PVL file for grid parameters
-isistools cam2map input.cub output.tif --map equi.map
+isistools csm2map input.cub output.tif --map equi.map
 
 # Explicit projection + resolution
-isistools cam2map input.cub output.tif -r 6.0
+isistools csm2map input.cub output.tif -r 6.0
 
 # Dense mode (slower, evaluates CSM at every pixel instead of every 16th)
-isistools cam2map input.cub output.tif --map equi.map --dense
+isistools csm2map input.cub output.tif --map equi.map --dense
 
 # Validate coarse-grid accuracy against dense ground truth
-isistools cam2map input.cub output.tif --map equi.map --validate
+isistools csm2map input.cub output.tif --map equi.map --validate
 
 # Match ISIS cam2map exactly by clipping to footprint polygon
-isistools cam2map input.cub output.tif --map equi.map --clip-to-footprint
+isistools csm2map input.cub output.tif --map equi.map --clip-to-footprint
 
 # Compare our output to an existing ISIS cam2map cube
-isistools cam2map-compare isis_output.cub csm_output.tif
+isistools csm2map-compare isis_output.cub csm_output.tif
 ```
 
 ## Options
@@ -214,9 +213,9 @@ values:
 footprintinit from=my.cub linc=10 sinc=10
 ```
 
-### What isistools cam2map does instead
+### What isistools csm2map does instead
 
-`isistools cam2map` does not use the cube's stored polygon at all by
+`isistools csm2map` does not use the cube's stored polygon at all by
 default. It evaluates the camera model directly on the output grid:
 
 - **Coarse mode** (`--step=16`, default): CSM model at every 16th output
@@ -328,7 +327,7 @@ Other cam2map-side docs gaps:
 
 ## Requirements
 
-`isistools cam2map` requires the CSM stack which is not pip-installable on
+`isistools csm2map` requires the CSM stack which is not pip-installable on
 all platforms:
 
 ```bash
@@ -344,5 +343,5 @@ conda install -c conda-forge cmake swig csm
 bash scripts/build_csmapi.sh
 ```
 
-See `scripts/test_cam2map_comparison.sh` for a complete end-to-end
+See `scripts/test_csm2map_comparison.sh` for a complete end-to-end
 validation script against a reference ISIS output.

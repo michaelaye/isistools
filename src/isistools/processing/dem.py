@@ -1,4 +1,4 @@
-"""DEM-based surface radius sampling for the cam2map pipeline.
+"""DEM-based surface radius sampling for the csm2map pipeline.
 
 ISIS uses an ellipsoidal target model by default but allows a Digital
 Elevation Model (DEM) to be supplied as the shape model via the cube

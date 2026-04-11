@@ -5,7 +5,7 @@ Usage::
     isistools mosaic cubes.lis --cnet control.net
     isistools tiepoints cubes.lis control.net
     isistools footprints cubes.lis
-    isistools cam2map input.cub output.tif --map equi.map
+    isistools csm2map input.cub output.tif --map equi.map
 """
 
 import os
@@ -454,7 +454,7 @@ def cnet_info(
 
 
 @app.command()
-def cam2map(
+def csm2map(
     from_cube: Annotated[
         Path,
         typer.Argument(help="Input spiceinit'd ISIS cube.", exists=True),
@@ -526,7 +526,7 @@ def cam2map(
         typer.Option("--interp", "-i", help="Interpolation: nearest, bilinear, bicubic."),
     ] = "bicubic",
 ):
-    """Map-project an ISIS cube using a CSM camera model (cam2map replacement).
+    """Map-project an ISIS cube using a CSM camera model (ISIS cam2map replacement).
 
     By default produces MORE coverage than ISIS cam2map because it uses the
     true camera model instead of the coarse footprint polygon from
@@ -538,17 +538,17 @@ def cam2map(
 
     \b
     Examples:
-      isistools cam2map input.cub output.tif --map equi.map
-      isistools cam2map input.cub output.tif -r 6.0
-      isistools cam2map input.cub output.tif --map equi.map --dense --validate
-      isistools cam2map input.cub output.tif --map equi.map --clip-to-footprint
-      isistools cam2map input.cub output.tif --map equi.map --shape-model ellipsoid
+      isistools csm2map input.cub output.tif --map equi.map
+      isistools csm2map input.cub output.tif -r 6.0
+      isistools csm2map input.cub output.tif --map equi.map --dense --validate
+      isistools csm2map input.cub output.tif --map equi.map --clip-to-footprint
+      isistools csm2map input.cub output.tif --map equi.map --shape-model ellipsoid
     """
     try:
         from isistools.processing.project import project
         from isistools.processing.resample import Interpolation
     except ImportError as e:
-        typer.echo(f"cam2map requires extra dependencies: pip install isistools[csm]\n{e}")
+        typer.echo(f"csm2map requires extra dependencies: pip install isistools[csm]\n{e}")
         raise typer.Exit(1) from None
 
     lat_range = None
@@ -584,17 +584,17 @@ def cam2map(
 
 
 @app.command()
-def cam2map_compare(
+def csm2map_compare(
     isis_projected: Annotated[
         Path,
         typer.Argument(help="ISIS cam2map output cube.", exists=True),
     ],
     csm_projected: Annotated[
         Path,
-        typer.Argument(help="csm-cam2map output GeoTIFF.", exists=True),
+        typer.Argument(help="isistools csm2map output GeoTIFF.", exists=True),
     ],
 ):
-    """Compare ISIS cam2map output with csm-cam2map output.
+    """Compare ISIS cam2map output with isistools csm2map output.
 
     Reports pixel-level difference statistics for validation.
     """
