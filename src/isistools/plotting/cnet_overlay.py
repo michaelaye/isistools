@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from shapely.geometry import Point
 
-from isistools.plotting.styles import CNET_POINT_STYLES, STATUS_COLOR_MAP
+from isistools.plotting.styles import CNET_POINT_STYLES
 
 if TYPE_CHECKING:
     import holoviews as hv
@@ -56,9 +56,11 @@ def cnet_points_image(
         return hv.Points([])
 
     if hover_cols is None:
-        hover_cols = [c for c in ["pointId", "status", "residual_magnitude",
-                                   "measureType", "pointType"]
-                      if c in df.columns]
+        hover_cols = [
+            c
+            for c in ["pointId", "status", "residual_magnitude", "measureType", "pointType"]
+            if c in df.columns
+        ]
 
     # HoloViews Image with kdims=['y','x'] maps the FIRST kdim ('y'/lines)
     # to horizontal and SECOND kdim ('x'/samples) to vertical. The scatter
@@ -116,9 +118,9 @@ def cnet_points_map(
     hv.extension("bokeh")
 
     if hover_cols is None:
-        hover_cols = [c for c in ["status", "residual_magnitude",
-                                   "n_measures"]
-                      if c in cnet_gdf.columns]
+        hover_cols = [
+            c for c in ["status", "residual_magnitude", "n_measures"] if c in cnet_gdf.columns
+        ]
 
     # Styles matching the --win matplotlib path
     _map_styles = {
@@ -186,7 +188,7 @@ def _bodyfixed_to_lonlat(cnet_df: pd.DataFrame) -> tuple[str, str]:
                 lat_col = f"{prefix}Lat"
                 cnet_df[lon_col] = np.degrees(np.arctan2(cnet_df[y_col], cnet_df[x_col])) % 360
                 cnet_df[lat_col] = np.degrees(
-                    np.arctan2(cnet_df[z_col], np.sqrt(cnet_df[x_col]**2 + cnet_df[y_col]**2))
+                    np.arctan2(cnet_df[z_col], np.sqrt(cnet_df[x_col] ** 2 + cnet_df[y_col] ** 2))
                 )
                 return lon_col, lat_col
     raise ValueError("No body-fixed XYZ coordinates found")
@@ -219,12 +221,10 @@ def _campt_one_serial(cube_path, samples, lines):
     isis.environ = os.environ.copy()
 
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".csv", delete=False
-        ) as coord_f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as coord_f:
             coord_path = coord_f.name
-            for s, l in zip(samples, lines):
-                coord_f.write(f"{s},{l}\n")
+            for s, line in zip(samples, lines):
+                coord_f.write(f"{s},{line}\n")
 
         out_path = coord_path + ".out.csv"
         isis.campt(
@@ -283,6 +283,7 @@ def _lonlat_from_campt(
 
     if clock_lookup is None:
         from isistools.io.cubes import build_serial_lookup
+
         clock_lookup = build_serial_lookup([Path(p) for p in cube_paths])
 
     df = cnet_df.copy()
@@ -300,8 +301,7 @@ def _lonlat_from_campt(
         measures = df.loc[mask, ["sample", "line"]]
         if measures.empty:
             continue
-        work.append((sn, cube_path, measures["sample"].tolist(),
-                      measures["line"].tolist(), mask))
+        work.append((sn, cube_path, measures["sample"].tolist(), measures["line"].tolist(), mask))
 
     n_workers = min(len(work), os.cpu_count() or 4)
     n_success = 0
@@ -400,20 +400,29 @@ def cnet_to_geodataframe(
         else:
             status = "unregistered"
 
-        records.append({
-            "pointId": point_id,
-            "geometry": Point(float(lon), float(lat)),
-            "status": status,
-            "n_measures": len(group),
-            "residual_magnitude": group["residual_magnitude"].mean(),
-            "pointType": group.get("pointType", pd.Series("Unknown")).iloc[0],
-        })
+        records.append(
+            {
+                "pointId": point_id,
+                "geometry": Point(float(lon), float(lat)),
+                "status": status,
+                "n_measures": len(group),
+                "residual_magnitude": group["residual_magnitude"].mean(),
+                "pointType": group.get("pointType", pd.Series("Unknown")).iloc[0],
+            }
+        )
 
     if not records:
         return gpd.GeoDataFrame(
-            columns=["pointId", "geometry", "status", "n_measures",
-                     "residual_magnitude", "pointType"],
-            geometry="geometry", crs="EPSG:4326",
+            columns=[
+                "pointId",
+                "geometry",
+                "status",
+                "n_measures",
+                "residual_magnitude",
+                "pointType",
+            ],
+            geometry="geometry",
+            crs="EPSG:4326",
         )
 
     gdf = gpd.GeoDataFrame(records, geometry="geometry", crs="EPSG:4326")
@@ -456,9 +465,7 @@ def cnet_residual_vectors(
     df["line_end"] = df["line"] + df.get("residualLine", 0.0) * scale
     df["sample_end"] = df["sample"] + df.get("residualSample", 0.0) * scale
 
-    segments = hv.Segments(
-        df, kdims=["line", "sample", "line_end", "sample_end"]
-    ).opts(
+    segments = hv.Segments(df, kdims=["line", "sample", "line_end", "sample_end"]).opts(
         color="#e74c3c",
         line_width=1.5,
         alpha=0.8,

@@ -376,6 +376,7 @@ def overlaps(
         typer.echo(f"Saved GeoPackage: {gpkg}")
 
     if png or png_path:
+        import geopandas as gpd
         import matplotlib.pyplot as plt
         from matplotlib.patches import Patch
 

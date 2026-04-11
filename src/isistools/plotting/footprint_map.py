@@ -45,8 +45,7 @@ def footprint_map(
         Interactive map plot (renders in notebooks and Panel apps).
     """
     if hover_cols is None:
-        hover_cols = [c for c in ["start_time"]
-                      if c in gdf.columns]
+        hover_cols = [c for c in ["start_time"] if c in gdf.columns]
 
     gdf = gdf.copy()
     gdf["short_pid"] = gdf["filename"].map(ctx_short_pid)
@@ -55,6 +54,7 @@ def footprint_map(
 
     def _plot_tweaks(plot, element):
         from bokeh.models import BoxZoomTool, Legend
+
         for legend in plot.state.select({"type": Legend}):
             legend.spacing = 20
             legend.padding = 15

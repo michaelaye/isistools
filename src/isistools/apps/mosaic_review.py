@@ -20,11 +20,11 @@ import panel as pn
 
 from isistools.apps.components import CnetInfoPanel, CnetSelector, CubeListSelector
 from isistools.io.controlnet import load_cnet
-from isistools.io.cubes import build_serial_lookup, load_cube, read_label
+from isistools.io.cubes import load_cube, read_label
 from isistools.io.footprints import load_footprints, read_cube_list
 from isistools.plotting.cnet_overlay import cnet_to_geodataframe
 from isistools.plotting.footprint_map import footprint_map, footprint_map_with_cnet
-from isistools.plotting.image_viewer import image_with_cnet, image_plot
+from isistools.plotting.image_viewer import image_plot, image_with_cnet
 
 if TYPE_CHECKING:
     import geopandas as gpd
@@ -90,7 +90,9 @@ class MosaicReview:
 
         # Image selector dropdown (populated after loading cubes)
         self._image_dropdown = pn.widgets.Select(
-            name="Image", options=[], width=400,
+            name="Image",
+            options=[],
+            width=400,
         )
         self._image_dropdown.param.watch(self._on_image_selected, "value")
 
@@ -159,9 +161,7 @@ class MosaicReview:
                 self._footprints, self._cnet_gdf, title="Mosaic Footprints"
             )
         else:
-            self._map_pane.object = footprint_map(
-                self._footprints, title="Mosaic Footprints"
-            )
+            self._map_pane.object = footprint_map(self._footprints, title="Mosaic Footprints")
 
     def _update_image_dropdown(self):
         """Populate the image selector with loaded cubes."""
@@ -176,18 +176,17 @@ class MosaicReview:
         try:
             da = load_cube(cube_path)
             if self._cnet_df is not None:
-                # Match via spacecraft clock count
-                clock_lookup = build_serial_lookup([cube_path])
+                # Match via spacecraft clock count: read the clock off the
+                # cube label and substring-match it against the cnet serial
+                # numbers (which are of the form "MRO/CTX/<clock>:<suffix>").
                 label = read_label(cube_path)
                 inst = label["IsisCube"]["Instrument"]
                 clock = str(
-                    inst.get("SpacecraftClockCount",
-                             inst.get("SpacecraftClockStartCount", ""))
+                    inst.get("SpacecraftClockCount", inst.get("SpacecraftClockStartCount", ""))
                 )
                 # Find the serial number that contains this clock count
                 matching = [
-                    sn for sn in self._cnet_df["serialnumber"].unique()
-                    if clock and clock in sn
+                    sn for sn in self._cnet_df["serialnumber"].unique() if clock and clock in sn
                 ]
                 if matching:
                     sn = matching[0]

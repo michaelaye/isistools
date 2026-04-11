@@ -8,7 +8,8 @@ Map-project an ISIS cube into a GeoTIFF using the Community Sensor Model
 (CSM) instead of ISIS's CSPICE-based camera. Drop-in replacement for
 ISIS `cam2map`, validated against ISIS 9.0.0 output on multiple CTX
 images at **99.95% coverage match and 100% agreement within 0.01 DN**,
-while running roughly **5–6× faster** than ISIS `cam2map`.
+while running roughly **5–13× faster** than ISIS `cam2map` (depending
+on cube length — the larger the strip, the larger the speedup).
 
 By default `csm2map` reads the cube's `Kernels.ShapeModel` keyword and
 uses the same DEM that ISIS would (e.g. the MOLA DEM for Mars), so the
@@ -16,6 +17,77 @@ two tools produce essentially the same valid-pixel mask out of the box.
 Use `--shape-model ellipsoid` to disable DEM lookups (faster but less
 accurate over topography), or `--clip-to-footprint` for an additional
 exact-match mode that clips to the polygon stored by `footprintinit`.
+
+## Installation
+
+`csm2map` is an **optional** isistools feature. Base isistools users (viewer,
+tiepoint review, cnet inspection, footprint map, etc.) do **not** need any
+of the CSM stack — install only if you actually intend to map-project.
+
+### 1. Install the `[csm]` extra
+
+```bash
+pip install "isistools[csm]"
+```
+
+This pulls the Python-side deps that are pip-installable: `scipy`, `pyproj`,
+`rich`.
+
+### 2. Install the CSM C++ stack from conda-forge
+
+The CSM plugin (`usgscsm`) and its Python bindings (`csmapi`) are not
+available on PyPI, so they must come from conda-forge. Along with `ale`
+(the ISD generator) and `rasterio` (GeoTIFF writer):
+
+```bash
+conda install -c conda-forge usgscsm ale rasterio
+```
+
+### 3. Apple Silicon (arm64) — **critical gotcha**
+
+At the time of writing, the conda-forge `csmapi` package is built for
+`x86_64` only. On an Apple-Silicon Mac it installs cleanly but fails at
+`import` with:
+
+```
+ImportError: dlopen(.../_csmapi.so): tried: ... (mach-o file, but is an
+incompatible architecture (have 'x86_64', need 'arm64e' or 'arm64'))
+```
+
+arm64 Mac users must **build `csmapi` from source** into the same conda
+env that holds `ale`, `usgscsm`, and `isistools`. A known-working build
+recipe lives in `scripts/build_csmapi.sh` in the isistools repo — it
+clones the `DOI-USGS/swigcsm` upstream, configures with the native
+architecture, and installs the resulting wheel into the active env.
+
+Once `csmapi` is arm64-native, `ale` + `usgscsm` + `csmapi` coexist in a
+single env and `isistools csm2map` works exactly as it does on Linux.
+
+### 4. Sanity check
+
+After install, this should run silently:
+
+```python
+from isistools.processing.camera import load_camera  # noqa: F401
+```
+
+If it raises `ModuleNotFoundError: csmapi` or an architecture-mismatch
+`ImportError`, re-check step 3.
+
+### 5. Reference: the maintainer's working install
+
+The isistools maintainer keeps two conda envs on macOS arm64:
+
+- `py312` — holds `isistools`, `ale`, `usgscsm`, and a **locally-built
+  arm64 `csmapi`**. This is where `isistools csm2map` runs.
+- `isis` — holds ISIS 9.0.0 (from conda-forge) itself. Only used for the
+  reference `cam2map`, `camrange`, `catlab` tools that `csm2map-compare`
+  shells out to for validation.
+
+This two-env split is not required — you can put everything in one env —
+but it cleanly separates the "what we're replacing" from "what's doing
+the replacing" and avoids any accidental library-path collision between
+ISIS's vendored CSPICE and the one `ale` picks up from conda-forge.
 
 ## Usage
 

@@ -80,11 +80,13 @@ def load_cnet(path: str | Path) -> pd.DataFrame:
     df = from_isis(str(path))
 
     # Normalize plio column names to isistools conventions
-    df = df.rename(columns={
-        "id": "pointId",
-        "sampleResidual": "residualSample",
-        "lineResidual": "residualLine",
-    })
+    df = df.rename(
+        columns={
+            "id": "pointId",
+            "sampleResidual": "residualSample",
+            "lineResidual": "residualLine",
+        }
+    )
 
     # Add residual magnitude
     res_s = df.get("residualSample", pd.Series(0.0, index=df.index))
@@ -100,11 +102,24 @@ def load_cnet(path: str | Path) -> pd.DataFrame:
     # Keep only columns isistools uses — plio's IsisControlNetwork carries
     # protobuf repeated-message fields that cannot be pickled.
     _keep = [
-        "pointId", "serialnumber", "sample", "line",
-        "residualSample", "residualLine", "residual_magnitude",
-        "measureType", "pointType", "pointIgnore", "measureIgnore", "status",
-        "adjustedX", "adjustedY", "adjustedZ",
-        "aprioriX", "aprioriY", "aprioriZ",
+        "pointId",
+        "serialnumber",
+        "sample",
+        "line",
+        "residualSample",
+        "residualLine",
+        "residual_magnitude",
+        "measureType",
+        "pointType",
+        "pointIgnore",
+        "measureIgnore",
+        "status",
+        "adjustedX",
+        "adjustedY",
+        "adjustedZ",
+        "aprioriX",
+        "aprioriY",
+        "aprioriZ",
     ]
     df = pd.DataFrame(df[[c for c in _keep if c in df.columns]])
 

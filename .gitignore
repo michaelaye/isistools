@@ -15,6 +15,14 @@ venv/
 .coverage
 htmlcov/
 .mypy_cache/
+*.profraw
+
+# ISIS print.prt log droppings
+*.prt
+
+# Local scratch — Claude Code session planning, pre-merge cam2map tarball
+Plans/
+cam2map_update/
 
 # Jupyter
 .ipynb_checkpoints/

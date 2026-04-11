@@ -103,7 +103,8 @@ def image_plot(
         plot_kwargs["height"] = height
 
     return da.hvplot.image(**plot_kwargs).opts(
-        hooks=[_deduplicate_tools], shared_axes=False,
+        hooks=[_deduplicate_tools],
+        shared_axes=False,
     )
 
 

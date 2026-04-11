@@ -54,14 +54,16 @@ def parse_overlap_list(path: str | Path) -> gpd.GeoDataFrame:
         else:
             zone_type = f"{n_images}-way overlap"
 
-        records.append({
-            "serials": serials_raw,
-            "images": serial_list,
-            "n_images": n_images,
-            "zone_type": zone_type,
-            "area_deg2": geom.area,
-            "geometry": geom,
-        })
+        records.append(
+            {
+                "serials": serials_raw,
+                "images": serial_list,
+                "n_images": n_images,
+                "zone_type": zone_type,
+                "area_deg2": geom.area,
+                "geometry": geom,
+            }
+        )
 
     gdf = gpd.GeoDataFrame(records, geometry="geometry", crs="EPSG:4326")
     return gdf

@@ -23,7 +23,7 @@ import panel as pn
 
 from isistools.apps.components import CnetInfoPanel, PointDetailPanel
 from isistools.io.controlnet import load_cnet
-from isistools.io.cubes import load_cube, read_label
+from isistools.io.cubes import load_cube, match_serials_to_cubes
 from isistools.io.footprints import read_cube_list
 from isistools.plotting.cnet_overlay import cnet_points_image, cnet_residual_vectors
 from isistools.plotting.image_viewer import image_plot
@@ -41,7 +41,6 @@ def _find_image_pairs(cnet_df: pd.DataFrame) -> list[tuple[str, str]]:
     Returns a list of (serial1, serial2) tuples, sorted by the number
     of shared points (most shared first).
     """
-    import pandas as pd
 
     # For each point, get all serial numbers
     point_serials = cnet_df.groupby("pointId")["serialnumber"].apply(set)
@@ -50,16 +49,13 @@ def _find_image_pairs(cnet_df: pd.DataFrame) -> list[tuple[str, str]]:
     for serials in point_serials:
         serials_list = sorted(serials)
         for i, s1 in enumerate(serials_list):
-            for s2 in serials_list[i + 1:]:
+            for s2 in serials_list[i + 1 :]:
                 pair = (s1, s2)
                 pair_counts[pair] = pair_counts.get(pair, 0) + 1
 
     # Sort by count descending
     sorted_pairs = sorted(pair_counts.items(), key=lambda x: -x[1])
     return [pair for pair, count in sorted_pairs]
-
-
-from isistools.io.cubes import build_serial_lookup, match_serials_to_cubes
 
 
 class TiepointReview:
@@ -111,9 +107,9 @@ class TiepointReview:
             name1 = p1.stem if p1 else s1.split("/")[-1]
             name2 = p2.stem if p2 else s2.split("/")[-1]
             # Count shared points
-            shared = self._cnet_df[
-                self._cnet_df["serialnumber"].isin([s1, s2])
-            ]["pointId"].value_counts()
+            shared = self._cnet_df[self._cnet_df["serialnumber"].isin([s1, s2])][
+                "pointId"
+            ].value_counts()
             n_shared = (shared >= 2).sum()
             label = f"{name1} ↔ {name2} ({n_shared} pts)"
             pair_labels[label] = (s1, s2)
@@ -127,11 +123,15 @@ class TiepointReview:
             width=500,
         )
         self._show_residuals = pn.widgets.Checkbox(
-            name="Show Residual Vectors", value=False,
+            name="Show Residual Vectors",
+            value=False,
         )
         self._residual_scale = pn.widgets.FloatSlider(
             name="Residual Scale",
-            start=1, end=100, value=10, step=1,
+            start=1,
+            end=100,
+            value=10,
+            step=1,
             width=200,
         )
 
@@ -139,9 +139,7 @@ class TiepointReview:
         self._left_pane = pn.pane.HoloViews(
             hv.Div("Select an image pair"), sizing_mode="stretch_both"
         )
-        self._right_pane = pn.pane.HoloViews(
-            hv.Div(""), sizing_mode="stretch_both"
-        )
+        self._right_pane = pn.pane.HoloViews(hv.Div(""), sizing_mode="stretch_both")
 
         # Wire up
         self._pair_selector.param.watch(self._on_pair_selected, "value")
@@ -179,7 +177,8 @@ class TiepointReview:
 
             if self._show_residuals.value:
                 vecs1 = cnet_residual_vectors(
-                    self._cnet_df, serial_number=s1,
+                    self._cnet_df,
+                    serial_number=s1,
                     scale=self._residual_scale.value,
                 )
                 left = left * vecs1
@@ -191,7 +190,8 @@ class TiepointReview:
 
             if self._show_residuals.value:
                 vecs2 = cnet_residual_vectors(
-                    self._cnet_df, serial_number=s2,
+                    self._cnet_df,
+                    serial_number=s2,
                     scale=self._residual_scale.value,
                 )
                 right = right * vecs2
@@ -247,6 +247,9 @@ class TiepointReview:
             Open browser.
         """
         pn.serve(
-            self.panel(), port=port, show=show,
-            title="Tiepoint Review", **kwargs,
+            self.panel(),
+            port=port,
+            show=show,
+            title="Tiepoint Review",
+            **kwargs,
         )

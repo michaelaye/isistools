@@ -266,7 +266,7 @@ def project(
             console.print(f"  {k:20s}  {v:7.2f} s  ({pct:5.1f}%)")
         accounted = sum(timings.values())
         other = total - accounted
-        console.print(f"  {'(other)':20s}  {other:7.2f} s  ({100*other/total:5.1f}%)")
+        console.print(f"  {'(other)':20s}  {other:7.2f} s  ({100 * other / total:5.1f}%)")
         console.print(f"  {'total':20s}  {total:7.2f} s")
 
     console.print(f"[green bold]Done![/green bold] -> {result}")

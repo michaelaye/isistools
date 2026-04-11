@@ -60,8 +60,14 @@ def _plot_footprints(
             edgecolor=color,
             linewidth=1.5,
         )
-        legend_handles.append(Patch(edgecolor=color, facecolor=(*color[:3], 0.3),
-                                    linewidth=1.5, label=ctx_short_pid(fn)))
+        legend_handles.append(
+            Patch(
+                edgecolor=color,
+                facecolor=(*color[:3], 0.3),
+                linewidth=1.5,
+                label=ctx_short_pid(fn),
+            )
+        )
 
     # -- Control point overlay --
     if cnet_df is not None:
@@ -76,7 +82,9 @@ def _plot_footprints(
                 if row["clock"]
             }
         cnet_gdf = cnet_to_geodataframe(
-            cnet_df, cube_paths=cube_paths, clock_lookup=clock_lookup,
+            cnet_df,
+            cube_paths=cube_paths,
+            clock_lookup=clock_lookup,
         )
         _cnet_mpl_styles = {
             "registered": {"color": "black", "marker": "o", "markersize": 3, "alpha": 0.7},
@@ -95,9 +103,17 @@ def _plot_footprints(
         cnet_handles, _ = ax.get_legend_handles_labels()
         legend_handles.extend(cnet_handles)
 
-    ax.legend(handles=legend_handles, loc="center left", bbox_to_anchor=(1.01, 0.5),
-              fontsize=11, framealpha=0.9, handlelength=2.0, handleheight=1.2,
-              borderpad=0.8, labelspacing=0.6)
+    ax.legend(
+        handles=legend_handles,
+        loc="center left",
+        bbox_to_anchor=(1.01, 0.5),
+        fontsize=11,
+        framealpha=0.9,
+        handlelength=2.0,
+        handleheight=1.2,
+        borderpad=0.8,
+        labelspacing=0.6,
+    )
 
     xmin, ymin, xmax, ymax = gdf.total_bounds
     x_margin = (xmax - xmin) * 0.1
@@ -140,6 +156,7 @@ def footprint_png(
         The written file path.
     """
     import matplotlib
+
     matplotlib.use("Agg")
 
     outpath = Path(outpath)
@@ -181,6 +198,7 @@ def footprint_window(
 ) -> None:
     """Display footprints in a native matplotlib window with hover tooltips."""
     import matplotlib
+
     matplotlib.use("QtAgg")
     import mplcursors
 

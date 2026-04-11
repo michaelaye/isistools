@@ -43,7 +43,20 @@ isistools footprintinit cubes.lis -j 8
 
 # Control network summary
 isistools cnet-info control.net
+
+# Map-project a CTX cube with a CSM camera model (optional feature,
+# replaces ISIS cam2map — see the csm2map docs chapter for install details)
+isistools csm2map input.cub output.tif --map equi.map
+isistools csm2map-compare isis.cub csm.tif
 ```
+
+> **Note on `csm2map`:** this is an optional subcommand that requires the
+> `[csm]` extra plus a conda-forge CSM stack (ale, usgscsm, rasterio). It is
+> not installed by default — users who only want the viewer tools don't pay
+> the extra dependency cost. See the
+> [csm2map chapter](https://michaelaye.github.io/isistools/csm2map.html)
+> for installation instructions, including an Apple Silicon gotcha where
+> `csmapi` must be built from source.
 
 ## Why?
 

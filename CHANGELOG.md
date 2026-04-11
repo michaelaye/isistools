@@ -7,6 +7,136 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-04-12
+
+### Added
+
+- **`csm2map` CLI command**: CSM-based replacement for ISIS `cam2map`.
+  Map-projects an ISIS cube into a GeoTIFF using the Community Sensor
+  Model (via `ale` + `usgscsm` + `csmapi`) instead of ISIS's CSPICE camera.
+  Validated against ISIS 9.0.0 at 99.95% coverage match and 100% agreement
+  within 0.01 DN on CTX; runs 5–13× faster than ISIS `cam2map` depending
+  on cube length. Optional feature gated behind the `[csm]` extra — base
+  isistools users pay no new dependency cost.
+- **`csm2map-compare` CLI command**: numeric validation of a csm2map
+  GeoTIFF against an ISIS cam2map reference cube.
+- **Reads an existing DEM as a shape model during projection**
+  (`--shape-model auto|ellipsoid|<path>`): csm2map consumes a DEM cube
+  (e.g. the MOLA radius DEM for Mars) to look up per-pixel body radii when
+  back-projecting through the CSM sensor. `auto` reads the input cube's
+  `Kernels.ShapeModel` and opens the same DEM ISIS `cam2map` would use,
+  matching ISIS's default behavior. This is a *read* path — csm2map uses
+  a DEM, it does not produce one.
+- **Jigsaw-aware SPICE source** (`--spice-source isis|naif|auto`, default
+  `isis`): reads SPICE pointing/position from the cube's embedded blobs
+  instead of the live NAIF kernels, which is the only correct choice after
+  `jigsaw update=true` since jigsaw updates the blobs but NOT the live
+  kernels. `naif` and `auto` are available for comparisons against
+  pre-jigsaw geometry.
+- **Stage-timing profiler** (`--profile`): per-stage wall time breakdown
+  (camera load, DEM open, coord transform, read input, resample, write).
+- **`docs/csm2map.qmd`**: full user chapter covering purpose, installation
+  (including the Apple Silicon `csmapi` build-from-source gotcha),
+  usage, options table, pipeline description, and ISIS-compatibility
+  validation.
+- **`docs/csm2map-design.md`**: design document capturing the resolution
+  decisions, validation methodology, and performance trade-offs (for
+  citation in an upcoming paper).
+- **`scripts/benchmark_csm2map.sh`**: parameterized benchmark harness that
+  runs `cam2map` and `csm2map` back-to-back on any CTX cube and emits a
+  speedup summary. Uses `pvl.loads()` on `camrange` output instead of
+  brittle grep/awk parsing.
+- **Processing layer** (`src/isistools/processing/`): new subpackage
+  containing the csm2map pipeline — `camera.py` (CSM model loader),
+  `grid.py` (output raster grid from MAP file or params), `transform.py`
+  (coarse-grid coordinate map with vectorized+threaded bilinear upsample),
+  `resample.py` (threaded `scipy.ndimage.map_coordinates`), `writers.py`
+  (ZSTD GeoTIFF writer), `project.py` (pipeline orchestrator),
+  `dem.py` (lazy windowed DEM radius sampler).
+- **PyPI classifiers** in `pyproject.toml`: license, OS, Python versions
+  3.10–3.13, Scientific/Astronomy, GIS, Image Processing topics.
+- **`[tool.pytest.ini_options]`** with a registered `slow` marker.
+- **`tests/test_cli.py`**: smoke tests for every registered CLI command's
+  `--help`, plus a regression test for the `overlaps --png` NameError bug
+  (item 3 below).
+
+### Changed
+
+- **CLI renamed `cam2map` → `csm2map`** to avoid confusion with the ISIS
+  command and to make clear that this is the CSM-based pipeline.
+- **Default coarse step 16 → 32** in `compute_transform_coarse`. Validation
+  against the dense path shows sub-pixel accuracy at step=32 on CTX,
+  roughly halving the CSM-call count with no observable quality cost.
+- **ZSTD-compressed tiled GeoTIFF output**, written with multi-threaded
+  encoding (`num_threads=ALL_CPUS`).
+- **Float32 throughout the resample pipeline** — coordinate maps,
+  interpolated coordinates, and output pixels are all `float32`, halving
+  the memory bandwidth vs the previous `float64` path.
+- **Bilinear coordinate upsample rewritten**: vectorized + thread-striped
+  `_bilinear_upsample_pair()` replacing `scipy.ndimage.zoom`, amortizing
+  the per-row index math across the line and sample channels. Combined
+  with the other CPU optimizations above, this delivered a 3× end-to-end
+  speedup vs the 0.6.0 prototype.
+- **Threaded resample**: `scipy.ndimage.map_coordinates` releases the GIL,
+  so the per-band resample is now split into horizontal stripes processed
+  by a `ThreadPoolExecutor`. ~2.5× speedup on the resample stage alone.
+- **Fast PVL label parser** (`read_label(fast=True)`, default): reads the
+  first 1 MB of the cube and parses it with `pvl.loads()` instead of
+  seeking through the whole file. Cut DEM label parsing from 1254 ms to
+  15 ms.
+- **Removed `knoten` dependency**: the CSM model is now constructed via
+  `csmapi.Isd()` + `plugin.constructModelFromISD()` directly, avoiding
+  `knoten`'s broken conda packaging.
+
+### Fixed
+
+- **ISIS SIGSEGV under restrictive sandbox**: `campt`/`cam2map`/`camrange`
+  and anything else that constructs an ISIS `CubeManager` crashed with
+  signal 11 when `RLIMIT_NOFILE` was set to `INT64_MAX`, because
+  `CubeManager::p_maxOpenFiles = rlim_cur * 0.60` overflowed to a garbage
+  value that corrupted the open-cube cache. `scripts/` and the benchmark
+  now set `ulimit -n 4096` up-front. See `scripts/isis_sandbox_fix.md`
+  for the full diagnosis.
+- **`overlaps --png` crashed with `NameError`** (`cli.py:395`):
+  `geopandas` (aliased as `gpd`) was referenced inside the PNG plot
+  branch but never imported. Ships in 0.6.0 and earlier. Fixed by adding
+  `import geopandas as gpd` next to the lazy matplotlib imports.
+  Regression test in `tests/test_cli.py` exercises the PNG branch with
+  mocked ISIS/geopandas data and asserts exit code 0.
+- **Empty `archive` and `clock_lookup` dead variables** removed from
+  `io/cubes.py:get_serial_number()` and
+  `apps/mosaic_review.py:_on_image_selected()`. Both were leftovers from
+  superseded code paths; the enclosing functions already worked
+  correctly without them.
+- **Ambiguous variable name `l`** in `plotting/cnet_overlay.py` renamed
+  to `line` for readability.
+
+### Documentation
+
+- **Research note** (`scripts/csm_research.md`): CSM governance, the
+  verification methodology behind the NGA standard, and a roadmap for
+  adding JANUS (ESA JUICE) to the supported sensor set.
+- **Polygon-dependence investigation** (`docs/disagreement_analysis.md`):
+  empirically verified that ISIS `cam2map` does NOT use the footprint
+  polygon stored by `footprintinit`. Two experiments (stripped polygon
+  and tight polygon) produced bit-identical outputs, refuting the
+  initial hypothesis that the ~870K-pixel coverage gap was polygon-based.
+- **Residual disagreement analysis**: the remaining ~18K-pixel difference
+  between csm2map and ISIS `cam2map` (after DEM integration) is traced to
+  a CSM-vs-CSPICE camera-model floor, not a csm2map bug. Documented in
+  `docs/csm2map-design.md` §6.
+- **CLAUDE.md**: documents the `py312` / `isis` two-env setup, the
+  processing layer architecture, and the csm2map command.
+
+### Known limitations
+
+- `get_target_radii()` currently hardcodes Mars NAIF ID 499. Needs
+  generalization for non-Mars targets before JANUS / non-Mars support.
+- `csm2map-compare` can produce a 1-row shape mismatch on very long CTX
+  strips (e.g. F05, 52,212 vs 52,207 rows) from differing half-pixel
+  handling in the lat/lon → pixel rounding. Affects only the comparison
+  tool, not the projected output itself.
+
 ## [0.6.0] - 2026-03-24
 
 ### Added
@@ -205,7 +335,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Typer CLI with commands: `mosaic`, `tiepoints`, `footprints`,
   `cnet-info`.
 
-[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/michaelaye/isistools/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/michaelaye/isistools/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/michaelaye/isistools/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/michaelaye/isistools/compare/v0.5.1...v0.5.2

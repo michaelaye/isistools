@@ -12,13 +12,10 @@ the format. The blob is typically GML or WKT text.
 
 from __future__ import annotations
 
-import struct
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import geopandas as gpd
-import numpy as np
-import pandas as pd
 import pvl
 import shapely
 from shapely import wkt as shapely_wkt
@@ -60,8 +57,7 @@ def _find_polygon_blob(cube_path: Path, label: pvl.PVLModule) -> str:
     polygon_obj = label.get("Polygon")
     if polygon_obj is None:
         raise FootprintNotFoundError(
-            f"No Polygon object found in {cube_path}. "
-            "Run footprintinit first."
+            f"No Polygon object found in {cube_path}. Run footprintinit first."
         )
 
     start_byte = int(polygon_obj["StartByte"]) - 1  # PVL is 1-based
@@ -103,6 +99,7 @@ def _parse_polygon_text(text: str) -> shapely.Geometry:
     # Try GML
     try:
         from shapely import gml
+
         return gml.loads(text)
     except (ImportError, Exception):
         pass
@@ -110,15 +107,14 @@ def _parse_polygon_text(text: str) -> shapely.Geometry:
     # Try ogr as fallback for GML
     try:
         from osgeo import ogr
+
         geom = ogr.CreateGeometryFromGML(text)
         if geom is not None:
             return shapely_wkt.loads(geom.ExportToWkt())
     except ImportError:
         pass
 
-    raise FootprintNotFoundError(
-        f"Could not parse polygon text. First 200 chars: {text[:200]}"
-    )
+    raise FootprintNotFoundError(f"Could not parse polygon text. First 200 chars: {text[:200]}")
 
 
 def read_footprint(
@@ -219,8 +215,7 @@ def load_footprints(
             mapping = label["IsisCube"].get("Mapping", {})
 
             clock = str(
-                inst.get("SpacecraftClockCount",
-                         inst.get("SpacecraftClockStartCount", ""))
+                inst.get("SpacecraftClockCount", inst.get("SpacecraftClockStartCount", ""))
             )
 
             record = {
@@ -253,8 +248,17 @@ def load_footprints(
 
     if not records:
         return gpd.GeoDataFrame(
-            columns=["path", "filename", "geometry", "target",
-                      "start_time", "instrument", "spacecraft", "clock", "level"],
+            columns=[
+                "path",
+                "filename",
+                "geometry",
+                "target",
+                "start_time",
+                "instrument",
+                "spacecraft",
+                "clock",
+                "level",
+            ],
             geometry="geometry",
         )
 

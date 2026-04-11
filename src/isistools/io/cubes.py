@@ -203,7 +203,6 @@ def get_serial_number(label: pvl.PVLModule) -> str:
         Instrument-derived identifier string.
     """
     inst = label["IsisCube"].get("Instrument", {})
-    archive = label["IsisCube"].get("Archive", {})
 
     # Try common patterns
     spacecraft = inst.get("SpacecraftName", inst.get("SpacecraftId", "Unknown"))

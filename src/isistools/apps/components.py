@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 import panel as pn
 
 if TYPE_CHECKING:
-    import geopandas as gpd
     import pandas as pd
 
 pn.extension("tabulator")
@@ -29,9 +28,7 @@ class CubeListSelector(pn.viewable.Viewer):
             placeholder="/path/to/cubelist.lis",
             width=400,
         )
-        self._load_btn = pn.widgets.Button(
-            name="Load", button_type="primary", width=80
-        )
+        self._load_btn = pn.widgets.Button(name="Load", button_type="primary", width=80)
         self._status = pn.pane.Str("", styles={"color": "#666"})
 
         self._on_load_callbacks: list = []
@@ -74,9 +71,7 @@ class CnetSelector(pn.viewable.Viewer):
             placeholder="/path/to/control.net",
             width=400,
         )
-        self._load_btn = pn.widgets.Button(
-            name="Load", button_type="primary", width=80
-        )
+        self._load_btn = pn.widgets.Button(name="Load", button_type="primary", width=80)
         self._status = pn.pane.Str("", styles={"color": "#666"})
 
         self._on_load_callbacks: list = []
@@ -122,14 +117,14 @@ class CnetInfoPanel(pn.viewable.Viewer):
         md = f"""### Control Network Summary
 | Metric | Value |
 |--------|-------|
-| Points | {stats['n_points']} |
-| Measures | {stats['n_measures']} |
-| Images | {stats['n_images']} |
-| Registered | {stats['n_registered']} |
-| Unregistered | {stats['n_unregistered']} |
-| Ignored | {stats['n_ignored']} |
-| Mean Residual | {stats['mean_residual']:.4f} |
-| Max Residual | {stats['max_residual']:.4f} |
+| Points | {stats["n_points"]} |
+| Measures | {stats["n_measures"]} |
+| Images | {stats["n_images"]} |
+| Registered | {stats["n_registered"]} |
+| Unregistered | {stats["n_unregistered"]} |
+| Ignored | {stats["n_ignored"]} |
+| Mean Residual | {stats["mean_residual"]:.4f} |
+| Max Residual | {stats["max_residual"]:.4f} |
 """
         self._content.object = md
 
