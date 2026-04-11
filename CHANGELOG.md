@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-04-12
+
+Documentation-only patch release. No code behavior changes — all
+csm2map pipeline outputs are bit-identical to 0.7.0.
+
+### Documentation
+
+- **Corrected `--clip-to-footprint` documentation.** The flag was
+  originally documented as an "ISIS cam2map compatibility mode" that
+  matched `cam2map` by clipping csm2map output to the `footprintinit`
+  polygon. That framing was based on a working hypothesis later
+  disproved empirically: ISIS `cam2map` ignores the polygon entirely
+  (stripping the polygon from the cube and re-running `cam2map`
+  produces bit-identical output — see `docs/csm2map.qmd § "The
+  footprintinit polygon precision story"` for the full narrative).
+  All affected documentation has been rewritten to drop the
+  cam2map-matching claim and reframe the flag as an escape hatch for
+  downstream tooling that explicitly wants a polygon-shaped output
+  mask. Affected surfaces:
+    - `isistools csm2map --help` — Typer option help text and
+      command docstring no longer claim ISIS-compatibility.
+    - `docs/csm2map.qmd` — Purpose paragraph, Usage example comment,
+      options table row, and the former "Pixel-perfect match"
+      paragraph rewritten. Cross-references the empirical-disproof
+      section.
+    - `docs/csm2map-design.md` §6 Known limitations gains a new
+      entry 7 documenting the flag as a historical
+      hypothesis-test-reject artifact, flagged as paper-worthy.
+    - `src/isistools/processing/project.py` — `clip_to_footprint`
+      parameter docstring, the in-function console message, and
+      the `_rasterize_footprint` helper docstring all corrected.
+
+### Known limitations (unchanged from 0.7.0)
+
+The `--clip-to-footprint` flag itself is retained in 0.7.1 for
+backward compatibility. Deprecation or removal is being considered
+for a future release.
+
 ## [0.7.0] - 2026-04-12
 
 ### Added
@@ -335,7 +373,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Typer CLI with commands: `mosaic`, `tiepoints`, `footprints`,
   `cnet-info`.
 
-[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/michaelaye/isistools/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/michaelaye/isistools/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/michaelaye/isistools/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/michaelaye/isistools/compare/v0.5.2...v0.5.3
