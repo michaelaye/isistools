@@ -22,7 +22,12 @@ isistools footprints cubes.lis
 isistools cnet-info control.net
 
 # csm2map - CSM-based replacement for ISIS cam2map
-# (requires pip install isistools[csm] + ISIS conda env)
+# Runs from the py312 conda env (not the isis env): csmapi is built from
+# source for osx-arm64 and installed there alongside ale/usgscsm/isistools.
+# The isis env is used only for the ISIS reference tools (cam2map, camrange,
+# catlab) that our benchmarks/comparisons shell out to.
+#   /Users/maye/miniforge3/envs/py312/bin/isistools csm2map ...
+#   conda activate isis && cam2map from=... to=...
 isistools csm2map input.cub output.tif --map equi.map
 isistools csm2map input.cub output.tif -r 6.0
 isistools csm2map input.cub output.tif --map equi.map --dense --validate
