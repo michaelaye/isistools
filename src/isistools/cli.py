@@ -513,6 +513,14 @@ def cam2map(
             "(ISIS cam2map compatibility mode). Default: full camera coverage.",
         ),
     ] = False,
+    shape_model: Annotated[
+        str,
+        typer.Option(
+            "--shape-model",
+            help="Shape model: 'auto' (read from cube label, default), "
+            "'ellipsoid' (constant mean radius), or path to a DEM cube.",
+        ),
+    ] = "auto",
     interp: Annotated[
         str,
         typer.Option("--interp", "-i", help="Interpolation: nearest, bilinear, bicubic."),
@@ -524,12 +532,17 @@ def cam2map(
     true camera model instead of the coarse footprint polygon from
     footprintinit. Use --clip-to-footprint for exact ISIS compatibility.
 
+    By default the shape model is read from the cube label, matching ISIS
+    cam2map. Use --shape-model ellipsoid to disable DEM lookups (faster but
+    less accurate over topography), or --shape-model PATH to use a custom DEM.
+
     \b
     Examples:
       isistools cam2map input.cub output.tif --map equi.map
       isistools cam2map input.cub output.tif -r 6.0
       isistools cam2map input.cub output.tif --map equi.map --dense --validate
       isistools cam2map input.cub output.tif --map equi.map --clip-to-footprint
+      isistools cam2map input.cub output.tif --map equi.map --shape-model ellipsoid
     """
     try:
         from isistools.processing.project import project
@@ -565,6 +578,7 @@ def cam2map(
         dense=dense,
         validate=validate,
         clip_to_footprint=clip_to_footprint,
+        shape_model=shape_model,
         interpolation=interpolation,
     )
 

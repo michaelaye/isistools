@@ -8,6 +8,7 @@ from rich.console import Console
 
 from isistools.io.cubes import read_isis_cube_raw
 from isistools.processing.camera import get_image_size, get_target_radii, load_camera
+from isistools.processing.dem import DemRadiusSampler, resolve_shape_model
 from isistools.processing.grid import OutputGrid, grid_from_map_file, grid_from_params
 from isistools.processing.resample import Interpolation, resample
 from isistools.processing.transform import (
@@ -35,6 +36,7 @@ def project(
     dense: bool = False,
     validate: bool = False,
     clip_to_footprint: bool = False,
+    shape_model: str | Path | None | Literal["auto", "ellipsoid"] = "auto",
     # Resampling
     interpolation: Interpolation = Interpolation.BICUBIC,
     # Output
@@ -68,6 +70,14 @@ def project(
         inherits ``footprintinit``'s precision limits. Default False -
         our camera-model-based mask is more accurate than the polygon.
         Use this flag only when comparing against ISIS cam2map output.
+    shape_model : str, Path, "auto", "ellipsoid", or None
+        Shape model used for the body's local radius:
+          - ``"auto"`` (default): read ``Kernels.ShapeModel`` from the
+            input cube label and use that DEM if present, otherwise
+            fall back to ellipsoid. Matches ISIS cam2map's default.
+          - ``"ellipsoid"`` or ``None``: use the constant mean radius
+            from the cube's target body.
+          - ``Path``: explicit path to an ISIS DEM cube.
     interpolation : Interpolation
         Pixel interpolation method.
     output_format : str
@@ -88,9 +98,27 @@ def project(
 
     # Step 2: Get target radii for sphere approximation
     eq_r, polar_r = get_target_radii(input_cube)
-    # For MVP, use mean radius.  TODO: use lat-dependent ellipsoid radius
+    # Mean radius used as fallback when no DEM is given or DEM has nodata
     mean_radius = (2 * eq_r + polar_r) / 3.0
-    console.print(f"  Surface radius: {mean_radius:.1f} m (sphere)")
+
+    # Step 2b: Resolve shape model
+    dem_sampler: DemRadiusSampler | None = None
+    if shape_model == "auto":
+        dem_path = resolve_shape_model(input_cube)
+        if dem_path is not None:
+            dem_sampler = DemRadiusSampler(dem_path, fallback_radius=mean_radius)
+            console.print(f"  Shape model: DEM {dem_path.name}")
+        else:
+            console.print(f"  Shape model: ellipsoid (radius {mean_radius:.1f} m)")
+    elif shape_model in (None, "ellipsoid"):
+        console.print(f"  Shape model: ellipsoid (radius {mean_radius:.1f} m)")
+    else:
+        dem_path = Path(shape_model)
+        if not dem_path.exists():
+            msg = f"DEM cube not found: {dem_path}"
+            raise FileNotFoundError(msg)
+        dem_sampler = DemRadiusSampler(dem_path, fallback_radius=mean_radius)
+        console.print(f"  Shape model: DEM {dem_path.name}")
 
     # Step 3: Define output grid
     console.print("[bold]Defining output grid[/bold]")
@@ -113,9 +141,12 @@ def project(
     if dense:
         console.print("[bold]Computing dense transform[/bold] (every pixel)...")
         coord_map = compute_transform_dense(
-            model, grid, mean_radius,
+            model,
+            grid,
+            mean_radius,
             input_n_lines=n_lines,
             input_n_samples=n_samples,
+            dem_sampler=dem_sampler,
         )
     else:
         n_coarse = (grid.height // coarse_step + 1) * (grid.width // coarse_step + 1)
@@ -130,6 +161,7 @@ def project(
             step=coarse_step,
             input_n_lines=n_lines,
             input_n_samples=n_samples,
+            dem_sampler=dem_sampler,
         )
 
     # Step 4b: Optional footprint-polygon clipping (ISIS cam2map compat mode)

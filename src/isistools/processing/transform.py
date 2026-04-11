@@ -22,6 +22,8 @@ from isistools.processing.grid import OutputGrid
 if TYPE_CHECKING:
     import csmapi
 
+    from isistools.processing.dem import DemRadiusSampler
+
 
 @dataclass
 class CoordinateMap:
@@ -42,6 +44,7 @@ def compute_transform_dense(
     surface_radius: float,
     input_n_lines: int | None = None,
     input_n_samples: int | None = None,
+    dem_sampler: "DemRadiusSampler | None" = None,
 ) -> CoordinateMap:
     """Evaluate CSM groundToImage at every output pixel (brute-force).
 
@@ -54,16 +57,24 @@ def compute_transform_dense(
     grid : OutputGrid
         Fully defined output raster grid.
     surface_radius : float
-        Constant surface radius in meters (sphere approximation for MVP).
+        Constant fallback surface radius in meters used when no DEM is
+        provided or when the DEM has nodata at a point.
     input_n_lines, input_n_samples : int, optional
         Input image dimensions for validity masking.
+    dem_sampler : DemRadiusSampler, optional
+        If provided, sample local body radius per point from a DEM cube
+        instead of using the constant ``surface_radius``. Matches ISIS
+        cam2map's behavior of using a shape model.
 
     Returns
     -------
     CoordinateMap
     """
     lat_rad, lon_rad = grid.pixel_to_latlon()
-    radii = np.full_like(lat_rad, surface_radius)
+    if dem_sampler is not None:
+        radii = dem_sampler.sample_radii(lat_rad, lon_rad)
+    else:
+        radii = np.full_like(lat_rad, surface_radius)
 
     in_lines, in_samps = ground_to_image_batch(model, lat_rad, lon_rad, radii)
 
@@ -92,6 +103,7 @@ def compute_transform_coarse(
     step: int = 16,
     input_n_lines: int | None = None,
     input_n_samples: int | None = None,
+    dem_sampler: "DemRadiusSampler | None" = None,
 ) -> CoordinateMap:
     """Evaluate CSM on a coarse grid, then bilinearly interpolate.
 
@@ -105,13 +117,17 @@ def compute_transform_coarse(
     grid : OutputGrid
         Output raster grid definition.
     surface_radius : float
-        Constant surface radius in meters.
+        Constant fallback surface radius in meters used when no DEM is
+        provided or when the DEM has nodata at a point.
     step : int
         Coarse grid spacing in pixels.  Smaller = more accurate, slower.
         16 is a good default for CTX; use 8 for HiRISE with high-res DEM.
     input_n_lines, input_n_samples : int, optional
         Input image dimensions for validity masking.  If provided, points
         that fall outside the input image are masked as invalid.
+    dem_sampler : DemRadiusSampler, optional
+        If provided, sample local body radius per coarse-grid point from
+        a DEM cube instead of using the constant ``surface_radius``.
 
     Returns
     -------
@@ -141,7 +157,10 @@ def compute_transform_coarse(
     lon_deg, lat_deg = transformer.transform(x, y)
     lat_rad = np.deg2rad(lat_deg)
     lon_rad = np.deg2rad(lon_deg)
-    radii = np.full_like(lat_rad, surface_radius)
+    if dem_sampler is not None:
+        radii = dem_sampler.sample_radii(lat_rad, lon_rad)
+    else:
+        radii = np.full_like(lat_rad, surface_radius)
 
     # Evaluate CSM on coarse grid
     coarse_lines, coarse_samps = ground_to_image_batch(model, lat_rad, lon_rad, radii)
