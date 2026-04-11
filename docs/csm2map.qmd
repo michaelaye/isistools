@@ -6,13 +6,16 @@ title: "csm2map"
 
 Map-project an ISIS cube into a GeoTIFF using the Community Sensor Model
 (CSM) instead of ISIS's CSPICE-based camera. Drop-in replacement for
-ISIS `cam2map`, validated at **100% agreement within 0.01 DN** against
-ISIS output on CTX.
+ISIS `cam2map`, validated against ISIS 9.0.0 output on multiple CTX
+images at **99.95% coverage match and 100% agreement within 0.01 DN**,
+while running roughly **5–6× faster** than ISIS `cam2map`.
 
-By default it produces **more coverage than ISIS** (~3% more valid pixels
-on a CTX image) because it uses the true camera model per output pixel
-instead of clipping to the cube's stored footprint polygon. See
-[ISIS compatibility mode](#isis-compatibility-mode) for exact matching.
+By default `csm2map` reads the cube's `Kernels.ShapeModel` keyword and
+uses the same DEM that ISIS would (e.g. the MOLA DEM for Mars), so the
+two tools produce essentially the same valid-pixel mask out of the box.
+Use `--shape-model ellipsoid` to disable DEM lookups (faster but less
+accurate over topography), or `--clip-to-footprint` for an additional
+exact-match mode that clips to the polygon stored by `footprintinit`.
 
 ## Usage
 
@@ -47,7 +50,8 @@ isistools csm2map-compare isis_output.cub csm_output.tif
 | `--step`, `-s` | 16 | Coarse grid step in pixels |
 | `--dense` | off | Evaluate CSM at every output pixel |
 | `--validate` | off | Spot-check coarse transform accuracy |
-| `--clip-to-footprint` | off | Clip output to footprint polygon (ISIS compat mode) |
+| `--clip-to-footprint` | off | Additionally clip to the cube's footprint polygon (rarely needed) |
+| `--shape-model` | `auto` | `auto` reads from cube label, `ellipsoid` disables DEM, or path to a DEM cube |
 | `--interp`, `-i` | bicubic | Interpolation: `nearest`, `bilinear`, `bicubic` |
 
 ## How it works
@@ -70,102 +74,115 @@ The pipeline has five stages:
    order reads input DN values at the mapped positions.
 5. **Write GeoTIFF.** rasterio + LZW compression + tiled 256×256 blocks.
 
-## ISIS compatibility mode
+## ISIS compatibility
 
-If you need output that matches ISIS `cam2map` pixel-for-pixel (e.g. for
-validation or to slot into an existing ISIS pipeline), use
-`--clip-to-footprint`. This reads the footprint polygon stored in the
-cube by `footprintinit` and uses it to mask the output.
+With the default `--shape-model auto` (i.e. read the DEM from the
+cube label, matching ISIS), `csm2map` already matches ISIS `cam2map`
+to **99.95% coverage and 100% of overlapping pixels within 0.01 DN**.
+You typically don't need any extra flag.
 
-Caveat: this is an **empirical hack** that makes our output match ISIS
-output, not a principled reproduction of what ISIS cam2map does
-internally. See [the footprintinit polygon precision
-story](#the-footprintinit-polygon-precision-story) for why.
+For the rare case where you want pixel-perfect agreement against an
+existing ISIS output (validation, regression testing, slotting into a
+bit-identical pipeline position), use `--clip-to-footprint`. It reads
+the footprint polygon stored in the cube by `footprintinit` and uses
+it as a hard mask on top of the camera-based valid region. This
+trades the ~14 K residual edge disagreement for ~10 K disagreement of
+a different shape — barely worth it in absolute terms, but useful if
+your downstream tooling expects the polygon-shaped mask exactly.
 
-Validated on MRO CTX `J08_048038_1842_XN_04N287W.lev1.cub` at 6 m/pix
-equirectangular against ISIS 9.0.0 `cam2map` output:
+Validation across two MRO CTX cubes (different orbits, regions and
+aspect ratios), both with the MOLA DEM as shape model, against ISIS
+9.0.0 `cam2map`:
 
-| Metric | Default (full coverage) | `--clip-to-footprint` |
-|--------|------------------------|----------------------|
-| Both valid | 27.37 M | 27.36 M |
-| ISIS-only | 6,359 | 10,450 |
-| CSM-only (our extra) | 871,722 | **2,432** |
-| Coverage overlap with ISIS | 96.5% | **99.96%** |
-| `\|diff\| < 0.01 DN` | 100% | 100% |
-| Std of (CSM - ISIS) | 0.0017 | 0.0017 |
-| Mean bias | 0.0000 | 0.0000 |
+| Metric                  | J08 (2536×12288) | F09 (5000×7168) |
+|-------------------------|------------------|-----------------|
+| ISIS cam2map wall time  | 64.64 s          | 73.74 s         |
+| `csm2map` wall time     | 12.14 s          | 11.36 s         |
+| Speedup                 | 5.32×            | 6.49×           |
+| ISIS valid pixels       | 27,371,919       | 31,483,792      |
+| `csm2map` valid pixels  | 27,373,477       | 31,474,360      |
+| Both valid              | 27,357,115       | 31,471,845      |
+| Coverage overlap        | 99.95%           | 99.96%          |
+| Disagreeing pixels      | 18,205           | 14,462          |
+| Mean (CSM − ISIS)       | -0.000000        | -0.000000       |
+| Std (CSM − ISIS)        | 0.0011           | 0.0012          |
+| Max abs diff            | 0.0157           | 0.0116          |
+| `\|diff\| < 0.001`      | 68.20%           | 66.09%          |
+| `\|diff\| < 0.01`       | 100.00%          | 100.00%         |
 
-In either mode, **DN agreement is essentially perfect**: where both
-tools produce valid pixels, they agree to within 0.01 DN on 100% of
-pixels, with zero mean bias. The only question is which pixels each
-tool considers valid — and that difference is the ~870K "CSM-only"
-band discussed below.
+The 14–18 K disagreeing pixels are the structural floor between CSM
+`UsgsAstroLineScanSensorModel` and ISIS `CTXCamera` — see
+[`scripts/disagreement_analysis.md`](https://github.com/michaelaye/isistools/blob/main/scripts/disagreement_analysis.md)
+for the deep dive. They're scattered single-pixel rounding noise at
+the perimeter of the camera footprint, and the two camera
+implementations cannot be made to agree on them without using the same
+camera class.
 
 ## The footprintinit polygon precision story
 
-While validating our implementation against ISIS 9.0.0 `cam2map`, we
-found a systematic ~3% coverage gap: our tool produced ~870,000 more
-valid pixels than ISIS on the same CTX image. These extra pixels form
-a contiguous ribbon along the tilted CTX footprint's edges. They have
-correct DN values (our camera model agrees with ISIS to within 0.01 DN
-where both are valid), so they are geometrically valid ground points
-that ISIS clips for some reason.
+This section is mostly historical: it documents an investigation that
+turned out to be a wild goose chase, plus the actual `footprintinit`
+behaviour we did learn from it.
 
-The surprising find: **~99.7% of these extra pixels lie outside the
-footprint polygon stored in the cube by `footprintinit`**. Rasterizing
-that polygon onto our output grid produces a mask that matches ISIS
-`cam2map`'s valid region to within **0.036%** (Jaccard similarity
-0.9996). All 9,881 disagreeing pixels are within 1 pixel of the
-polygon boundary — i.e. at the rasterization precision limit, not at
-the polygon-discretization precision limit.
+When we first validated our implementation against ISIS 9.0.0
+`cam2map`, we used a constant ellipsoidal radius and saw a systematic
+~3% coverage gap: our tool produced ~870,000 more valid pixels than
+ISIS along the tilted CTX footprint's edges. Investigating why those
+extra pixels appeared, we noticed that **~99.7% of them lay outside
+the footprint polygon stored in the cube by `footprintinit`** —
+rasterising the polygon brought us into 99.96% match with ISIS.
 
-That match is too tight to be coincidence. If `cam2map` were running
-an independent per-pixel camera test (as a naive reading of the source
-suggests), its output should differ from the LINC=100 polygon by
-hundreds to thousands of pixels where the straight-chord polygon cuts
-off the curved true footprint. Instead the disagreement is
-sub-pixel-boundary level.
-
-But reading the ISIS 9.0.0 `cam2map.cpp` source carefully, we cannot
-find the coupling: **`cam2map` contains no reference to `Polygon`,
-`footprint`, `ImagePolygon`, or `Blob`**. The validity test in
-`cam2mapReverse::Xform()` is `Camera::SetUniversalGround(lat, lon)`
+That looked at first like a smoking gun: maybe `cam2map` was secretly
+clipping to the polygon. But reading the ISIS 9.0.0 `cam2map.cpp`
+source carefully there is **no reference to `Polygon`, `footprint`,
+`ImagePolygon`, or `Blob` anywhere in the file**. The validity test
+in `cam2mapReverse::Xform()` is `Camera::SetUniversalGround(lat, lon)`
 followed by a bounds check on the resulting `Sample()`/`Line()`.
-Ground range is from `Camera::GroundRange()`. Neither call references
+Ground range comes from `Camera::GroundRange()`. Neither call touches
 the polygon.
 
-Where the coupling might hide:
+The question is then: how can two independent computations agree to
+sub-pixel precision?
 
-- `cam2map` drives `ProcessRubberSheet` with custom patch parameters.
-  For line-scan cameras it calls
-  `setPatchParameters(1, startLine, 5, frameSize, 4, frameSize * 2)`.
-  `ProcessRubberSheet` uses a quad-tree that bilinearly approximates
-  the transform inside each patch and subdivides patches whose corners
-  fail. Near the image boundary the quad-tree produces a piecewise-
-  linear approximation of the valid/invalid edge. If the patch sizes
-  for line-scan cameras are coarser than for framing cameras, the
-  edge staircase could end up matching footprintinit's LINC=100
-  sampling — not via direct polygon reuse, but by happening to sample
-  the camera at similar density. This is plausible but not verified.
-- The `Camera` base class or a line-scan subclass might internally
-  read the polygon blob during construction and use it to initialize
-  the search bounds for the iterative `SetUniversalGround` inversion.
-  We have not traced this deeply enough to rule it out.
+**Resolution: it really is coincidence — or rather, both computations
+inherit the same answer from the same `Camera` class.** Once we
+integrated the MOLA DEM as the shape model in our `csm2map` (matching
+what ISIS `cam2map` does by default), the 870 K-pixel "extra" band
+disappeared **without any polygon clipping**. Our DEM-aware CSM output
+now matches ISIS to **99.95% coverage out of the box**, and the
+remaining ~18 K disagreement is attributable to a sub-pixel-level
+divergence between the two camera implementations themselves (CSM
+`UsgsAstroLineScanSensorModel` vs ISIS `CTXCamera`), not to polygon
+clipping. See `scripts/disagreement_analysis.md` for the full
+post-DEM picture.
 
-**Empirical verification we haven't run yet:** delete the `Polygon`
-blob from a copy of the cube and re-run ISIS `cam2map`. If the output
-coverage matches the original, the polygon plays no role in
-`cam2map`'s output. If the coverage changes, `cam2map` is using the
-polygon somehow. Similarly: re-run `footprintinit LINC=1 SINC=1` on a
-copy (producing a much tighter polygon), then re-run `cam2map`, and
-see whether the valid mask changes. Both tests are easy to run in a
-few minutes once you have ISIS available.
+So the original 870 K-pixel "polygon coupling" was an artifact of our
+shape-model mismatch, not of any cam2map–polygon coupling. The
+mechanism was: when we used a constant ellipsoid, our CSM iteration
+converged to ground points that lay slightly *farther from the local
+surface* than ISIS's DEM-aware iteration, which made the CSM camera
+"see" extra ground points just outside the true footprint. ISIS's
+camera (and `footprintinit`'s perimeter sampling, which uses the same
+camera) both reject those points. Once we fed our CSM the same DEM as
+ISIS, the agreement went from "looks like polygon clipping" to
+"directly matches per pixel". The polygon mask and the post-DEM
+camera-based mask happen to look very similar because they both
+reflect the same underlying `Camera::SetImage` decisions on the same
+image — not because cam2map ever consults the polygon.
 
-Either way, the practical observation stands: **ISIS cam2map's valid
-mask matches the cube's stored footprint polygon to within rasterization
-error on our test image**, and clipping our CSM-based output to that
-same polygon (`--clip-to-footprint`) brings us into 99.96% agreement
-with ISIS. The remaining ~0.04% is edge rasterization noise.
+**Empirical test to fully nail this** (haven't run it): delete the
+`Polygon` blob from a copy of the cube and re-run ISIS `cam2map`.
+With `cam2map.cpp` not referencing the polygon, the output should be
+pixel-for-pixel identical to a normal run. If you want to be even more
+thorough, also re-run `footprintinit LINC=1 SINC=1` on a copy
+(producing a much tighter polygon) and see whether the cam2map output
+changes. Source reading says it shouldn't.
+
+The `--clip-to-footprint` flag in `csm2map` is therefore only useful
+for the narrow case where you want to validate against the exact
+polygon-shaped mask `footprintinit` produced — you generally don't
+need it because the DEM-aware CSM camera arrives at essentially the
+same boundary on its own.
 
 ### How footprintinit samples the image perimeter
 
