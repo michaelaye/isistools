@@ -170,13 +170,30 @@ camera-based mask happen to look very similar because they both
 reflect the same underlying `Camera::SetImage` decisions on the same
 image — not because cam2map ever consults the polygon.
 
-**Empirical test to fully nail this** (haven't run it): delete the
-`Polygon` blob from a copy of the cube and re-run ISIS `cam2map`.
-With `cam2map.cpp` not referencing the polygon, the output should be
-pixel-for-pixel identical to a normal run. If you want to be even more
-thorough, also re-run `footprintinit LINC=1 SINC=1` on a copy
-(producing a much tighter polygon) and see whether the cam2map output
-changes. Source reading says it shouldn't.
+**Empirical confirmation** (now done — see commit `<>`): we ran two
+direct tests on the J08 CTX cube:
+
+| Test | Polygon byte size | cam2map output diff vs reference |
+|------|-------------------|----------------------------------|
+| Default polygon (LINC=100)         | 11,116 bytes  | — (reference) |
+| **No polygon (stripped from cube)** | **0 bytes**   | **0 — bit-identical** |
+| **Tight polygon (LINC=10, ~10× denser)** | **109,946 bytes** | **0 — bit-identical** |
+
+All three runs produced the **same byte-identical 46.4 M-pixel output**.
+`cam2map` is confirmed to be fully independent of the cube's polygon
+blob: it doesn't read the polygon, doesn't clip to it, and doesn't
+even change behaviour when the polygon is 10× denser. The earlier
+`csm2map`-vs-`cam2map` agreement with the polygon was indeed a
+coincidence of both tools using the same `Camera` class with the same
+shape model.
+
+This also means: in your standard pipeline (`spiceinit → footprintinit
+→ cam2map`), `footprintinit` is **not actually required** before
+`cam2map` — `spiceinit` strips the polygon, `footprintinit` puts a new
+one back, but `cam2map` would happily run on either form and produce
+the same output. `footprintinit` is required for the *other*
+downstream tools (`qmos`, `findimageoverlaps`, `autoseed`,
+`isistools footprints`) that consume the polygon directly.
 
 The `--clip-to-footprint` flag in `csm2map` is therefore only useful
 for the narrow case where you want to validate against the exact
