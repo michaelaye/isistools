@@ -193,6 +193,7 @@ def ground_to_image_batch(
     lats: np.ndarray,
     lons: np.ndarray,
     radii: np.ndarray,
+    workers: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Batch groundToImage: lat/lon/radius arrays -> input (lines, samples).
 
@@ -204,6 +205,12 @@ def ground_to_image_batch(
         Planetocentric latitude and longitude in radians.
     radii : ndarray
         Surface radius in meters at each point (sphere or DEM).
+    workers : int, optional
+        Number of worker threads for the per-point CSM loop. CSM calls
+        release the Python GIL (they're C++), so threading gives close
+        to linear speedup up to the number of CPU cores. ``None``
+        (default) picks ``os.cpu_count()``. Pass ``1`` to force a
+        single-threaded loop (useful for debugging and reproducibility).
 
     Returns
     -------
@@ -216,7 +223,8 @@ def ground_to_image_batch(
     flon = lons.ravel()
     frad = radii.ravel()
 
-    # Convert planetocentric lat/lon/radius to body-fixed ECEF (X, Y, Z)
+    # Convert planetocentric lat/lon/radius to body-fixed ECEF (X, Y, Z).
+    # This is vectorized; the slow part is the per-point CSM call below.
     cos_lat = np.cos(flat)
     sin_lat = np.sin(flat)
     cos_lon = np.cos(flon)
@@ -226,21 +234,41 @@ def ground_to_image_batch(
     y = frad * cos_lat * sin_lon
     z = frad * sin_lat
 
-    out_lines = np.full(flat.shape, np.nan)
-    out_samps = np.full(flat.shape, np.nan)
+    n = len(flat)
+    out_lines = np.full(n, np.nan)
+    out_samps = np.full(n, np.nan)
 
-    # TODO: This loop is the bottleneck to optimize later.
-    # Options: Cython wrapper, ctypes batch call, or multiprocessing.
-    for i in range(len(flat)):
-        if np.isnan(flat[i]):
-            continue
-        try:
-            gp = csmapi.EcefCoord(x[i], y[i], z[i])
-            ip = model.groundToImage(gp)
-            out_lines[i] = ip.line
-            out_samps[i] = ip.samp
-        except Exception:
-            pass  # leave as NaN
+    if workers is None:
+        workers = os.cpu_count() or 1
+
+    def _process_range(i0: int, i1: int) -> None:
+        """Evaluate CSM groundToImage for indices [i0, i1)."""
+        for i in range(i0, i1):
+            if np.isnan(flat[i]):
+                continue
+            try:
+                gp = csmapi.EcefCoord(x[i], y[i], z[i])
+                ip = model.groundToImage(gp)
+                out_lines[i] = ip.line
+                out_samps[i] = ip.samp
+            except Exception:
+                pass  # leave as NaN
+
+    if workers <= 1 or n < 1024:
+        # Single-threaded path for small batches and debugging
+        _process_range(0, n)
+    else:
+        # Thread the per-point loop. CSM's groundToImage releases the GIL
+        # in its C++ call, so threading gives near-linear speedup up to
+        # the CPU count. Split the range into ``workers`` contiguous
+        # chunks rather than per-item submission to minimize scheduling
+        # overhead.
+        from concurrent.futures import ThreadPoolExecutor
+
+        chunk = (n + workers - 1) // workers
+        ranges = [(i, min(i + chunk, n)) for i in range(0, n, chunk)]
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            list(pool.map(lambda r: _process_range(*r), ranges))
 
     return (
         out_lines.reshape(lats.shape),
