@@ -521,6 +521,16 @@ def csm2map(
             "'ellipsoid' (constant mean radius), or path to a DEM cube.",
         ),
     ] = "auto",
+    spice_source: Annotated[
+        str,
+        typer.Option(
+            "--spice-source",
+            help="SPICE pointing source: 'isis' (cube's embedded blobs, "
+            "the only correct choice after jigsaw update=true), "
+            "'naif' (live kernels), or 'auto' (ALE picks, prefers NAIF). "
+            "Default 'isis'.",
+        ),
+    ] = "isis",
     interp: Annotated[
         str,
         typer.Option("--interp", "-i", help="Interpolation: nearest, bilinear, bicubic."),
@@ -579,6 +589,7 @@ def csm2map(
         validate=validate,
         clip_to_footprint=clip_to_footprint,
         shape_model=shape_model,
+        spice_source=spice_source,
         interpolation=interpolation,
     )
 

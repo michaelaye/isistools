@@ -39,6 +39,7 @@ def _ensure_csm_plugin_loaded() -> None:
 
     # Also check sys.prefix
     import sys
+
     candidates.append(Path(sys.prefix) / "lib" / "csmplugins" / "libusgscsm.dylib")
     candidates.append(Path(sys.prefix) / "lib" / "csmplugins" / "libusgscsm.so")
 
@@ -64,7 +65,11 @@ def _ensure_csm_plugin_loaded() -> None:
     raise RuntimeError(msg)
 
 
-def load_camera(cube_path: str | Path) -> "csmapi.RasterGM":
+def load_camera(
+    cube_path: str | Path,
+    spice_source: str = "isis",
+    refresh_isd: bool = True,
+) -> "csmapi.RasterGM":
     """Load a CSM RasterGM sensor model from a spiceinit'd ISIS cube.
 
     Uses ale to generate an ISD (Instrument Support Data) from the cube,
@@ -76,6 +81,28 @@ def load_camera(cube_path: str | Path) -> "csmapi.RasterGM":
     ----------
     cube_path : path-like
         Path to a Level 1 ISIS cube that has been run through spiceinit.
+    spice_source : {"isis", "naif", "auto"}
+        Where ALE should source SPICE data from when generating the ISD:
+
+        - ``"isis"`` (default): use the SPICE blobs **embedded in the cube**
+          itself (``IsisSpice`` driver path). This is the right choice for
+          any pipeline that runs ``jigsaw update=true``, because jigsaw
+          updates the cube's embedded blobs but does NOT update the live
+          NAIF kernels — so reading the live kernels would silently
+          discard the jigsaw bundle adjustment results.
+        - ``"naif"``: force the live NAIF kernel path (``NaifSpice``
+          driver). Use this only when you know the cube has not been
+          jigsaw-updated, or when you want to compare against the
+          pristine pre-jigsaw geometry.
+        - ``"auto"``: let ALE pick the driver via its default heuristic,
+          which currently prefers NAIF over ISIS regardless of whether
+          the cube has been jigsaw-updated. **Not recommended** for
+          jigsaw pipelines.
+    refresh_isd : bool
+        If True (default), regenerate the ISD JSON every time. Set to
+        False to reuse a cached ISD if one already exists alongside the
+        cube. Defaults to True because a stale ISD from a pre-jigsaw run
+        is the exact failure mode we want to prevent.
 
     Returns
     -------
@@ -95,12 +122,23 @@ def load_camera(cube_path: str | Path) -> "csmapi.RasterGM":
     cube_path = Path(cube_path)
     cube_str = str(cube_path)
 
-    # Generate ISD JSON with ale if not already present. csmapi.Isd() reads
-    # the JSON file with the same stem as the cube (e.g. ``foo.cub`` ->
-    # ``foo.json``), so ale's output must live alongside the cube.
+    # Generate ISD JSON via ALE.  We default to ``only_isis_spice=True``
+    # so that the cube's embedded SPICE blobs (which jigsaw updates with
+    # update=true) are the source of truth, NOT the live NAIF kernels.
+    # csmapi.Isd() reads the JSON file with the same stem as the cube
+    # (e.g. ``foo.cub`` -> ``foo.json``), so ale's output must live
+    # alongside the cube.
     isd_path = cube_path.with_suffix(".json")
-    if not isd_path.exists():
-        isd_str = ale.loads(cube_str)
+    if refresh_isd or not isd_path.exists():
+        if spice_source == "isis":
+            isd_str = ale.loads(cube_str, only_isis_spice=True)
+        elif spice_source == "naif":
+            isd_str = ale.loads(cube_str, only_naif_spice=True)
+        elif spice_source == "auto":
+            isd_str = ale.loads(cube_str)
+        else:
+            msg = f"Invalid spice_source={spice_source!r}; must be 'isis', 'naif', or 'auto'"
+            raise ValueError(msg)
         isd_path.write_text(isd_str)
 
     isd = csmapi.Isd(cube_str)

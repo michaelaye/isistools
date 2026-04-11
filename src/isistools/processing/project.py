@@ -37,6 +37,7 @@ def project(
     validate: bool = False,
     clip_to_footprint: bool = False,
     shape_model: str | Path | None | Literal["auto", "ellipsoid"] = "auto",
+    spice_source: Literal["isis", "naif", "auto"] = "isis",
     # Resampling
     interpolation: Interpolation = Interpolation.BICUBIC,
     # Output
@@ -78,6 +79,20 @@ def project(
           - ``"ellipsoid"`` or ``None``: use the constant mean radius
             from the cube's target body.
           - ``Path``: explicit path to an ISIS DEM cube.
+    spice_source : {"isis", "naif", "auto"}
+        Where ALE should source SPICE pointing/position data from when
+        building the camera model:
+
+          - ``"isis"`` (default): read the SPICE blobs **embedded in
+            the cube**. This is the right choice for any pipeline that
+            runs ``jigsaw update=true``, because jigsaw updates the
+            cube's blobs but NOT the live NAIF kernels — reading the
+            live kernels would silently throw away the bundle
+            adjustment results.
+          - ``"naif"``: force live NAIF kernel reads. Use only when
+            comparing against pre-jigsaw geometry.
+          - ``"auto"``: let ALE pick (currently prefers NAIF). Not
+            recommended for jigsaw pipelines.
     interpolation : Interpolation
         Pixel interpolation method.
     output_format : str
@@ -90,9 +105,14 @@ def project(
     input_cube = Path(input_cube)
     output_path = Path(output_path)
 
-    # Step 1: Load camera model
-    console.print(f"[bold]Loading CSM camera model[/bold] from {input_cube.name}")
-    model = load_camera(input_cube)
+    # Step 1: Load camera model. Default spice_source="isis" reads the
+    # cube's embedded SPICE blobs, which is the only correct choice
+    # after jigsaw update=true.
+    console.print(
+        f"[bold]Loading CSM camera model[/bold] from {input_cube.name} "
+        f"(SPICE source: {spice_source})"
+    )
+    model = load_camera(input_cube, spice_source=spice_source)
     n_lines, n_samples = get_image_size(model)
     console.print(f"  Input image: {n_samples} x {n_lines} (samples x lines)")
 
