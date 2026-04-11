@@ -43,6 +43,12 @@ def write_geotiff(
     # Replace NaN with nodata
     data = np.where(np.isnan(data), nodata, data)
 
+    # ZSTD compression is dramatically faster than LZW at similar or
+    # better compression ratios for float32 image data. ZSTD levels
+    # 1-3 complete in well under half the wall time of LZW on a
+    # 100 MB float32 cube while producing slightly smaller output.
+    # The NUM_THREADS=ALL_CPUS option lets GDAL parallelize the
+    # compression across cores.
     profile = {
         "driver": "GTiff",
         "dtype": data.dtype,
@@ -52,7 +58,9 @@ def write_geotiff(
         "crs": grid.crs.to_wkt(),
         "transform": grid.transform,
         "nodata": nodata,
-        "compress": "lzw",
+        "compress": "zstd",
+        "zstd_level": 3,
+        "num_threads": "ALL_CPUS",
         "tiled": True,
         "blockxsize": 256,
         "blockysize": 256,

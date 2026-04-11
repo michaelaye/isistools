@@ -1,5 +1,7 @@
 """Main csm2map pipeline: orchestrate camera, grid, transform, resample, I/O."""
 
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
 
@@ -21,6 +23,19 @@ from isistools.processing.writers import write_geotiff
 console = Console()
 
 
+@contextmanager
+def _stage(timings: dict | None, name: str):
+    """Record wall time of a pipeline stage into ``timings`` if not None."""
+    if timings is None:
+        yield
+        return
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        timings[name] = time.perf_counter() - t0
+
+
 def project(
     input_cube: str | Path,
     output_path: str | Path,
@@ -32,7 +47,7 @@ def project(
     lat_range: tuple[float, float] | None = None,
     lon_range: tuple[float, float] | None = None,
     # Transform options
-    coarse_step: int = 16,
+    coarse_step: int = 32,
     dense: bool = False,
     validate: bool = False,
     clip_to_footprint: bool = False,
@@ -42,6 +57,8 @@ def project(
     interpolation: Interpolation = Interpolation.BICUBIC,
     # Output
     output_format: Literal["geotiff", "cube"] = "geotiff",
+    # Profiling
+    profile: bool = False,
 ) -> Path:
     """Map-project an ISIS cube using CSM camera model.
 
@@ -105,6 +122,9 @@ def project(
     input_cube = Path(input_cube)
     output_path = Path(output_path)
 
+    timings: dict[str, float] | None = {} if profile else None
+    t_total0 = time.perf_counter() if profile else None
+
     # Step 1: Load camera model. Default spice_source="isis" reads the
     # cube's embedded SPICE blobs, which is the only correct choice
     # after jigsaw update=true.
@@ -112,45 +132,49 @@ def project(
         f"[bold]Loading CSM camera model[/bold] from {input_cube.name} "
         f"(SPICE source: {spice_source})"
     )
-    model = load_camera(input_cube, spice_source=spice_source)
+    with _stage(timings, "load_camera"):
+        model = load_camera(input_cube, spice_source=spice_source)
     n_lines, n_samples = get_image_size(model)
     console.print(f"  Input image: {n_samples} x {n_lines} (samples x lines)")
 
     # Step 2: Get target radii for sphere approximation
-    eq_r, polar_r = get_target_radii(input_cube)
+    with _stage(timings, "target_radii"):
+        eq_r, polar_r = get_target_radii(input_cube)
     # Mean radius used as fallback when no DEM is given or DEM has nodata
     mean_radius = (2 * eq_r + polar_r) / 3.0
 
     # Step 2b: Resolve shape model
-    dem_sampler: DemRadiusSampler | None = None
-    if shape_model == "auto":
-        dem_path = resolve_shape_model(input_cube)
-        if dem_path is not None:
+    with _stage(timings, "dem_open"):
+        dem_sampler: DemRadiusSampler | None = None
+        if shape_model == "auto":
+            dem_path = resolve_shape_model(input_cube)
+            if dem_path is not None:
+                dem_sampler = DemRadiusSampler(dem_path, fallback_radius=mean_radius)
+                console.print(f"  Shape model: DEM {dem_path.name}")
+            else:
+                console.print(f"  Shape model: ellipsoid (radius {mean_radius:.1f} m)")
+        elif shape_model in (None, "ellipsoid"):
+            console.print(f"  Shape model: ellipsoid (radius {mean_radius:.1f} m)")
+        else:
+            dem_path = Path(shape_model)
+            if not dem_path.exists():
+                msg = f"DEM cube not found: {dem_path}"
+                raise FileNotFoundError(msg)
             dem_sampler = DemRadiusSampler(dem_path, fallback_radius=mean_radius)
             console.print(f"  Shape model: DEM {dem_path.name}")
-        else:
-            console.print(f"  Shape model: ellipsoid (radius {mean_radius:.1f} m)")
-    elif shape_model in (None, "ellipsoid"):
-        console.print(f"  Shape model: ellipsoid (radius {mean_radius:.1f} m)")
-    else:
-        dem_path = Path(shape_model)
-        if not dem_path.exists():
-            msg = f"DEM cube not found: {dem_path}"
-            raise FileNotFoundError(msg)
-        dem_sampler = DemRadiusSampler(dem_path, fallback_radius=mean_radius)
-        console.print(f"  Shape model: DEM {dem_path.name}")
 
     # Step 3: Define output grid
     console.print("[bold]Defining output grid[/bold]")
-    grid = _build_grid(
-        model=model,
-        input_cube=input_cube,
-        map_file=map_file,
-        projection=projection,
-        resolution=resolution,
-        lat_range=lat_range,
-        lon_range=lon_range,
-    )
+    with _stage(timings, "build_grid"):
+        grid = _build_grid(
+            model=model,
+            input_cube=input_cube,
+            map_file=map_file,
+            projection=projection,
+            resolution=resolution,
+            lat_range=lat_range,
+            lon_range=lon_range,
+        )
     console.print(f"  Output: {grid.width} x {grid.height} pixels, {grid.resolution:.2f} m/px")
     console.print(
         f"  Lat: [{grid.lat_min:.4f}, {grid.lat_max:.4f}]  "
@@ -160,29 +184,31 @@ def project(
     # Step 4: Compute coordinate transform
     if dense:
         console.print("[bold]Computing dense transform[/bold] (every pixel)...")
-        coord_map = compute_transform_dense(
-            model,
-            grid,
-            mean_radius,
-            input_n_lines=n_lines,
-            input_n_samples=n_samples,
-            dem_sampler=dem_sampler,
-        )
+        with _stage(timings, "coord_transform"):
+            coord_map = compute_transform_dense(
+                model,
+                grid,
+                mean_radius,
+                input_n_lines=n_lines,
+                input_n_samples=n_samples,
+                dem_sampler=dem_sampler,
+            )
     else:
         n_coarse = (grid.height // coarse_step + 1) * (grid.width // coarse_step + 1)
         console.print(
             f"[bold]Computing coarse transform[/bold] "
             f"(step={coarse_step}, ~{n_coarse:,} CSM calls)..."
         )
-        coord_map = compute_transform_coarse(
-            model,
-            grid,
-            mean_radius,
-            step=coarse_step,
-            input_n_lines=n_lines,
-            input_n_samples=n_samples,
-            dem_sampler=dem_sampler,
-        )
+        with _stage(timings, "coord_transform"):
+            coord_map = compute_transform_coarse(
+                model,
+                grid,
+                mean_radius,
+                step=coarse_step,
+                input_n_lines=n_lines,
+                input_n_samples=n_samples,
+                dem_sampler=dem_sampler,
+            )
 
     # Step 4b: Optional footprint-polygon clipping (ISIS cam2map compat mode)
     if clip_to_footprint:
@@ -214,19 +240,34 @@ def project(
 
     # Step 5: Read input image
     console.print(f"[bold]Reading[/bold] {input_cube.name}")
-    data, _label = read_isis_cube_raw(input_cube)
+    with _stage(timings, "read_input"):
+        data, _label = read_isis_cube_raw(input_cube)
 
     # Step 6: Resample
     console.print(f"[bold]Resampling[/bold] ({interpolation.value})")
-    projected = resample(data, coord_map, interpolation=interpolation, fill_value=np.nan)
+    with _stage(timings, "resample"):
+        projected = resample(data, coord_map, interpolation=interpolation, fill_value=np.nan)
 
     # Step 7: Write output
     console.print(f"[bold]Writing[/bold] {output_path.name}")
-    if output_format == "geotiff":
-        result = write_geotiff(output_path, projected, grid, nodata=0.0)
-    else:
-        msg = "ISIS cube output not yet implemented"
-        raise NotImplementedError(msg)
+    with _stage(timings, "write_output"):
+        if output_format == "geotiff":
+            result = write_geotiff(output_path, projected, grid, nodata=0.0)
+        else:
+            msg = "ISIS cube output not yet implemented"
+            raise NotImplementedError(msg)
+
+    if timings is not None:
+        total = time.perf_counter() - t_total0
+        console.print()
+        console.print("[bold cyan]Stage timings[/bold cyan]")
+        for k, v in timings.items():
+            pct = 100 * v / total if total > 0 else 0
+            console.print(f"  {k:20s}  {v:7.2f} s  ({pct:5.1f}%)")
+        accounted = sum(timings.values())
+        other = total - accounted
+        console.print(f"  {'(other)':20s}  {other:7.2f} s  ({100*other/total:5.1f}%)")
+        console.print(f"  {'total':20s}  {total:7.2f} s")
 
     console.print(f"[green bold]Done![/green bold] -> {result}")
     return result

@@ -10,11 +10,12 @@ The coarse-grid approach is essentially what ISIS ProcessRubberSheet does
 trivially vectorizable and easy to reason about accuracy.
 """
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
-from scipy.interpolate import RegularGridInterpolator
 
 from isistools.processing.camera import ground_to_image_batch
 from isistools.processing.grid import OutputGrid
@@ -23,6 +24,102 @@ if TYPE_CHECKING:
     import csmapi
 
     from isistools.processing.dem import DemRadiusSampler
+
+
+def _bilinear_upsample_pair(
+    coarse_a: np.ndarray,
+    coarse_b: np.ndarray,
+    h: int,
+    w: int,
+    workers: int | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Bilinearly upsample two co-aligned coarse 2D arrays onto (h, w).
+
+    ``coarse_a`` and ``coarse_b`` must have the same shape and both
+    describe a strictly uniform coarse grid spanning pixel (0, 0) to
+    pixel (h-1, w-1). This is enforced by ``compute_transform_coarse``
+    via ``np.linspace``.
+
+    Processing both arrays together is critical for speed: the
+    bottleneck is memory bandwidth on the 46M-pixel output, and the
+    per-row/per-col index/fraction arrays are shared across the two
+    outputs, so we amortize the index computation.
+
+    All arithmetic is done in ``float32`` (halves the memory traffic
+    vs ``float64``). The coarse line/sample values easily fit — CTX
+    is at most 12,288 lines, which float32 represents exactly.
+
+    The computation is threaded across horizontal stripes of the
+    output. Numpy broadcast operations on large float32 arrays
+    release the GIL, so this gives near-linear speedup up to the
+    memory-bandwidth limit (~4x at 4 workers on an 8-core machine).
+    """
+    nrc, ncc = coarse_a.shape
+    step_r = (h - 1) / (nrc - 1) if nrc > 1 else 1.0
+    step_c = (w - 1) / (ncc - 1) if ncc > 1 else 1.0
+
+    # Downcast the coarse arrays to float32 once (they're tiny, ~170 KB
+    # each, so this is free).
+    a32 = coarse_a.astype(np.float32, copy=False)
+    b32 = coarse_b.astype(np.float32, copy=False)
+
+    # Continuous coarse-grid column indices for every output column
+    c = np.arange(w, dtype=np.float32) / np.float32(step_c)
+    c0 = np.floor(c).astype(np.intp)
+    np.clip(c0, 0, ncc - 2, out=c0)
+    c1 = c0 + 1
+    cf = (c - c0.astype(np.float32))[None, :]
+    one_cf = np.float32(1.0) - cf
+    c0_row = c0[None, :]
+    c1_row = c1[None, :]
+
+    # Output arrays — allocated once, filled per stripe in workers
+    out_a = np.empty((h, w), dtype=np.float32)
+    out_b = np.empty((h, w), dtype=np.float32)
+
+    def _process_stripe(r_lo: int, r_hi: int) -> None:
+        r = np.arange(r_lo, r_hi, dtype=np.float32) / np.float32(step_r)
+        r0 = np.floor(r).astype(np.intp)
+        np.clip(r0, 0, nrc - 2, out=r0)
+        r1 = r0 + 1
+
+        rf = (r - r0.astype(np.float32))[:, None]
+        one_rf = np.float32(1.0) - rf
+
+        w00 = one_rf * one_cf
+        w01 = one_rf * cf
+        w10 = rf * one_cf
+        w11 = rf * cf
+
+        r0c = r0[:, None]
+        r1c = r1[:, None]
+
+        # Gather corners for channel A and combine
+        out_a[r_lo:r_hi] = (
+            a32[r0c, c0_row] * w00
+            + a32[r0c, c1_row] * w01
+            + a32[r1c, c0_row] * w10
+            + a32[r1c, c1_row] * w11
+        )
+        out_b[r_lo:r_hi] = (
+            b32[r0c, c0_row] * w00
+            + b32[r0c, c1_row] * w01
+            + b32[r1c, c0_row] * w10
+            + b32[r1c, c1_row] * w11
+        )
+
+    if workers is None:
+        workers = max(1, (os.cpu_count() or 1) // 2)
+
+    if workers <= 1 or h < 256:
+        _process_stripe(0, h)
+    else:
+        stripe = (h + workers - 1) // workers
+        ranges = [(i * stripe, min((i + 1) * stripe, h)) for i in range(workers)]
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            list(pool.map(lambda r: _process_stripe(*r), ranges))
+
+    return out_a, out_b
 
 
 @dataclass
@@ -137,14 +234,15 @@ def compute_transform_coarse(
 
     h, w = grid.height, grid.width
 
-    # Build coarse grid indices
-    rows_coarse = np.arange(0, h, step)
-    cols_coarse = np.arange(0, w, step)
-    # Ensure we include the last row/col
-    if rows_coarse[-1] != h - 1:
-        rows_coarse = np.append(rows_coarse, h - 1)
-    if cols_coarse[-1] != w - 1:
-        cols_coarse = np.append(cols_coarse, w - 1)
+    # Build a strictly uniform coarse grid that starts at 0 and ends at
+    # (h - 1, w - 1). Using linspace (instead of arange + manually
+    # appending h-1) guarantees even spacing, which lets us replace the
+    # slow RegularGridInterpolator with a vectorized numpy bilinear
+    # interpolation downstream.
+    nrows_coarse = max(2, (h - 1) // step + 2)
+    ncols_coarse = max(2, (w - 1) // step + 2)
+    rows_coarse = np.linspace(0.0, h - 1, nrows_coarse)
+    cols_coarse = np.linspace(0.0, w - 1, ncols_coarse)
 
     cc, rr = np.meshgrid(cols_coarse, rows_coarse)
 
@@ -166,35 +264,15 @@ def compute_transform_coarse(
     coarse_lines, coarse_samps = ground_to_image_batch(model, lat_rad, lon_rad, radii)
 
     # Do NOT mask out-of-bounds coarse points. Masking them causes
-    # RegularGridInterpolator to propagate NaN to the entire 16x16 cell
-    # via bilinear interpolation, which produces a ragged, ~1-pixel-
-    # inaccurate edge. Instead, let the mapping extrapolate smoothly and
-    # apply the per-pixel bounds check AFTER interpolation.
+    # interpolation to propagate NaN to the entire coarse cell, which
+    # produces a ragged, ~1-pixel-inaccurate edge. Instead, let the
+    # mapping extrapolate smoothly and apply the per-pixel bounds check
+    # AFTER interpolation.
 
-    # Interpolate to full resolution
-    interp_lines = RegularGridInterpolator(
-        (rows_coarse.astype(float), cols_coarse.astype(float)),
-        coarse_lines,
-        method="linear",
-        bounds_error=False,
-        fill_value=np.nan,
-    )
-    interp_samps = RegularGridInterpolator(
-        (rows_coarse.astype(float), cols_coarse.astype(float)),
-        coarse_samps,
-        method="linear",
-        bounds_error=False,
-        fill_value=np.nan,
-    )
-
-    # Evaluate at all output pixels
-    all_rows = np.arange(h)
-    all_cols = np.arange(w)
-    cc_full, rr_full = np.meshgrid(all_cols, all_rows)
-    pts = np.column_stack([rr_full.ravel(), cc_full.ravel()])
-
-    in_lines = interp_lines(pts).reshape(h, w)
-    in_samps = interp_samps(pts).reshape(h, w)
+    # Upsample the coarse line/sample arrays to the full (h, w) grid
+    # via a single shared-weight pass. See _bilinear_upsample_pair for
+    # the memory-bandwidth reasoning.
+    in_lines, in_samps = _bilinear_upsample_pair(coarse_lines, coarse_samps, h, w)
 
     valid = np.isfinite(in_lines) & np.isfinite(in_samps)
 

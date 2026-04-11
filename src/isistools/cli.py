@@ -495,8 +495,15 @@ def csm2map(
     ] = None,
     step: Annotated[
         int,
-        typer.Option("--step", "-s", help="Coarse grid step (pixels). Smaller=more accurate."),
-    ] = 16,
+        typer.Option(
+            "--step",
+            "-s",
+            help="Coarse grid step in output pixels. Smaller=more accurate but "
+            "slower (more CSM calls). Default 32 works well for CTX at 6 m/pix "
+            "and any similarly smooth line-scan + DEM combination; drop to 16 "
+            "or 8 for HiRISE / rugged terrain / high-res DEM.",
+        ),
+    ] = 32,
     dense: Annotated[
         bool,
         typer.Option("--dense", help="Evaluate CSM at every pixel (slow, for validation)."),
@@ -531,6 +538,10 @@ def csm2map(
             "Default 'isis'.",
         ),
     ] = "isis",
+    profile: Annotated[
+        bool,
+        typer.Option("--profile", help="Print per-stage wall times at the end."),
+    ] = False,
     interp: Annotated[
         str,
         typer.Option("--interp", "-i", help="Interpolation: nearest, bilinear, bicubic."),
@@ -591,6 +602,7 @@ def csm2map(
         shape_model=shape_model,
         spice_source=spice_source,
         interpolation=interpolation,
+        profile=profile,
     )
 
 

@@ -22,20 +22,47 @@ ISIS_HRS = np.float32(-3.4028232635611926e38)
 ISIS_HIS = np.float32(-3.4028234663852886e38)
 
 
-def read_label(cube_path: str | Path) -> pvl.PVLModule:
+def read_label(cube_path: str | Path, *, fast: bool = True) -> pvl.PVLModule:
     """Read the PVL label from an ISIS cube file.
 
     Parameters
     ----------
     cube_path : path-like
         Path to the .cub file.
+    fast : bool
+        If True (default), read only the first ``LABEL_MAX_BYTES`` of
+        the file and parse that, which is dramatically faster for
+        large cubes. ``pvl.load(path)`` without this optimization can
+        take seconds on multi-gigabyte files even though the label is
+        only a few tens of KB — it apparently does not stop reading
+        at the ``End`` marker. For a 2 GB MOLA DEM the difference is
+        ~1250 ms vs ~15 ms.
 
     Returns
     -------
     pvl.PVLModule
         Parsed PVL label.
     """
-    return pvl.load(str(cube_path))
+    if not fast:
+        return pvl.load(str(cube_path))
+
+    # Read a generous chunk - ISIS labels are typically < 64 KB but can
+    # reach ~1 MB for cubes with many attached Tables or a large History.
+    with open(cube_path, "rb") as f:
+        head = f.read(LABEL_MAX_BYTES)
+
+    try:
+        return pvl.loads(head.decode("latin-1", errors="replace"))
+    except Exception:
+        # Fall back to the slow path if the chunk truncated the label
+        return pvl.load(str(cube_path))
+
+
+# Upper bound on how many bytes ``read_label(..., fast=True)`` reads.
+# Chosen large enough for any ISIS cube we've seen (CTX labels are ~10 KB,
+# MOLA DEM ~25 KB, lev1 cubes with Tables ~65 KB). Bumped to 1 MB to cover
+# cubes with unusually large History blocks.
+LABEL_MAX_BYTES = 1 * 1024 * 1024
 
 
 def get_projection_info(label: pvl.PVLModule) -> dict | None:
