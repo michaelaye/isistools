@@ -23,7 +23,7 @@ from isistools.processing.transform import (
     compute_transform_dense,
     validate_coarse_vs_dense,
 )
-from isistools.processing.writers import write_geotiff
+from isistools.processing.writers import write_geotiff, write_mapping_pvl
 
 console = Console()
 
@@ -273,6 +273,8 @@ def project(
     with _stage(timings, "write_output"):
         if output_format == "geotiff":
             result = write_geotiff(output_path, projected, grid, nodata=0.0)
+            pvl_path = write_mapping_pvl(output_path, grid, body)
+            console.print(f"  Mapping sidecar: {pvl_path.name}")
         else:
             msg = "ISIS cube output not yet implemented"
             raise NotImplementedError(msg)
