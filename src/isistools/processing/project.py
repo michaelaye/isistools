@@ -407,7 +407,19 @@ def _build_grid(
 def _derive_ground_range(model) -> tuple[tuple[float, float], tuple[float, float]]:
     """Derive lat/lon ground range by probing CSM model at image corners + edges.
 
-    Returns (lat_min, lat_max), (lon_min, lon_max) in degrees.
+    Returns ``(lat_min, lat_max), (lon_min, lon_max)`` in degrees
+    (planetocentric, positive east).
+
+    Handles the **antimeridian crossing** case correctly: MRO is a polar
+    orbiter, so CTX routinely images strips that cross the ±180° boundary.
+    A naive ``min(lons)``/``max(lons)`` on the raw ``arctan2`` output
+    would produce a 358° range instead of a 2° range. We avoid this by
+    computing the *circular mean* of the longitudes, measuring all
+    offsets from that mean in wrapped [-180, +180] space, and deriving
+    the bounds from the offset extremes. This works for any image
+    narrower than 180° — including antimeridian crossings, prime-meridian
+    crossings, and polar images where the longitude spread is large but
+    the physical strip is narrow.
     """
     import csmapi
 
@@ -428,7 +440,7 @@ def _derive_ground_range(model) -> tuple[tuple[float, float], tuple[float, float
         (n_lines / 2, n_samps / 2),
     ]
 
-    # Also sample along the edges at ~100 points
+    # Also sample along the edges at ~100 points per side
     for frac in np.linspace(0, 1, 100):
         line = 0.5 + frac * (n_lines - 1)
         probes.append((line, 0.5))
@@ -457,13 +469,34 @@ def _derive_ground_range(model) -> tuple[tuple[float, float], tuple[float, float
         msg = "Could not derive ground range from camera model"
         raise RuntimeError(msg)
 
-    # Add a small buffer (1%)
-    lat_span = max(lats) - min(lats)
-    lon_span = max(lons) - min(lons)
+    lats_arr = np.array(lats)
+    lons_arr = np.array(lons)
+
+    # Latitude is straightforward — no wraparound.
+    lat_span = lats_arr.max() - lats_arr.min()
     buf_lat = lat_span * 0.01
-    buf_lon = lon_span * 0.01
+    lat_min = float(lats_arr.min() - buf_lat)
+    lat_max = float(lats_arr.max() + buf_lat)
+
+    # Longitude requires circular statistics to handle the antimeridian.
+    # arctan2 returns values in [-180, +180]. A CTX strip crossing the
+    # ±180° boundary will have probes at e.g. +179° and -179°, giving
+    # a naive span of 358° instead of the correct 2°.
+    #
+    # Fix: compute the circular mean (the "center direction" of all the
+    # probe longitudes), then measure every probe as an offset from that
+    # center in wrapped [-180, +180] space. The offset min/max give the
+    # true tight bounding box no matter where the data sits on the globe.
+    lon_rad = np.radians(lons_arr)
+    center_lon = np.degrees(np.arctan2(np.mean(np.sin(lon_rad)), np.mean(np.cos(lon_rad))))
+
+    # Offset each probe from the circular mean, wrapped to [-180, +180].
+    offsets = (lons_arr - center_lon + 180.0) % 360.0 - 180.0
+    buf_lon = (offsets.max() - offsets.min()) * 0.01
+    lon_min = float(center_lon + offsets.min() - buf_lon)
+    lon_max = float(center_lon + offsets.max() + buf_lon)
 
     return (
-        (min(lats) - buf_lat, max(lats) + buf_lat),
-        (min(lons) - buf_lon, max(lons) + buf_lon),
+        (lat_min, lat_max),
+        (lon_min, lon_max),
     )

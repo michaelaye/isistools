@@ -351,3 +351,108 @@ class TestGridFromMapFileConventions:
 
         assert grid.lat_min == pytest.approx(30.0, abs=1e-9)
         assert grid.lat_max == pytest.approx(45.0, abs=1e-9)
+
+
+# ------------------------------------------------------------------
+# Longitude wraparound (antimeridian crossing) in _derive_ground_range
+#
+# MRO is a polar orbiter — CTX images cross the ±180° antimeridian
+# routinely. _derive_ground_range uses arctan2 which returns [-180, +180],
+# so a strip spanning 179° to -179° (a 2° strip) would naively produce
+# min=-179, max=+179 → a 358° range covering the whole planet.
+#
+# The fix uses circular statistics: compute the circular mean of all
+# probe longitudes, then measure offsets from that mean in wrapped
+# [-180, +180] space. This gives the correct tight bounding box.
+#
+# We can't call _derive_ground_range directly (it needs a CSM model),
+# so we test the circular-mean logic in isolation by reimplementing it
+# on synthetic probe arrays — the same formulas used in project.py.
+
+
+def _circular_lon_range(lons_deg: list[float]) -> tuple[float, float]:
+    """Reproduce the circular-mean longitude range logic from
+    _derive_ground_range for testing."""
+    lons_arr = np.array(lons_deg)
+    lon_rad = np.radians(lons_arr)
+    center_lon = np.degrees(np.arctan2(np.mean(np.sin(lon_rad)), np.mean(np.cos(lon_rad))))
+    offsets = (lons_arr - center_lon + 180.0) % 360.0 - 180.0
+    buf = (offsets.max() - offsets.min()) * 0.01
+    return (
+        float(center_lon + offsets.min() - buf),
+        float(center_lon + offsets.max() + buf),
+    )
+
+
+class TestLongitudeWraparound:
+    """Regression tests for the antimeridian crossing bug in
+    _derive_ground_range. Before the fix, a CTX strip crossing ±180°
+    would produce a ~358° output grid instead of a ~2° strip."""
+
+    def test_no_wraparound_normal_case(self):
+        """A strip entirely in [70, 73] should produce a ~3° range."""
+        lons = [70.5, 71.0, 71.5, 72.0, 72.5, 73.0]
+        lo, hi = _circular_lon_range(lons)
+        assert hi - lo == pytest.approx(2.5 * 1.02, abs=0.1)  # span + 1% buffer each side
+        assert lo == pytest.approx(70.5, abs=0.1)
+        assert hi == pytest.approx(73.0, abs=0.1)
+
+    def test_antimeridian_crossing(self):
+        """A strip spanning 179° to -179° (2° wide) must NOT produce
+        a 358° range. This is the exact bug that motivated the fix."""
+        # Simulate arctan2 output for a strip crossing the antimeridian
+        lons = [178.0, 179.0, 179.5, -179.5, -179.0, -178.0]
+        lo, hi = _circular_lon_range(lons)
+        span = hi - lo
+        assert span < 10.0, f"Expected ~4° span, got {span}° — wraparound bug!"
+        assert span == pytest.approx(4.0 * 1.02, abs=0.2)
+
+    def test_antimeridian_crossing_dense(self):
+        """Dense probes simulating a real CTX strip crossing ±180°."""
+        # 100 points from 179° to 181° (= -179° in arctan2 space)
+        lons_true = np.linspace(179.0, 181.0, 100)
+        # Wrap to [-180, +180] as arctan2 would
+        lons_atan2 = ((lons_true + 180.0) % 360.0) - 180.0
+        lo, hi = _circular_lon_range(lons_atan2.tolist())
+        span = hi - lo
+        assert span < 5.0, f"Expected ~2° span, got {span}°"
+        assert span == pytest.approx(2.0 * 1.02, abs=0.1)
+
+    def test_prime_meridian_crossing(self):
+        """A strip crossing 0° (e.g. -1° to +1°) — no wraparound issue
+        with arctan2, but make sure the circular logic doesn't break it."""
+        lons = [-1.0, -0.5, 0.0, 0.5, 1.0]
+        lo, hi = _circular_lon_range(lons)
+        span = hi - lo
+        assert span == pytest.approx(2.0 * 1.02, abs=0.1)
+        assert lo == pytest.approx(-1.0, abs=0.1)
+        assert hi == pytest.approx(1.0, abs=0.1)
+
+    def test_near_pole_scattered_longitudes(self):
+        """Near a pole, longitudes scatter widely but the physical strip
+        is narrow. The circular mean should still produce a tight range
+        centered on the dominant direction."""
+        # Simulate a polar CTX strip where the narrow swath samples many
+        # longitudes because they converge at the pole. Main track at ~90°
+        # with ±20° scatter from the pole convergence.
+        rng = np.random.default_rng(42)
+        lons = 90.0 + rng.uniform(-20, 20, 200)
+        lo, hi = _circular_lon_range(lons.tolist())
+        span = hi - lo
+        # Should be ~40° (the ±20° scatter), not 360°.
+        assert span < 50.0, f"Expected ~40° span, got {span}°"
+        assert span > 30.0
+
+    def test_old_bug_would_fail(self):
+        """Explicit regression: the OLD code did min()/max() on raw
+        arctan2 output. For antimeridian-crossing data, that produces
+        a span of ~358°. Verify our fix doesn't."""
+        lons = [179.5, 179.9, -179.9, -179.5]
+        # Old code: max(lons) - min(lons) = 179.9 - (-179.9) = 359.8°
+        old_span = max(lons) - min(lons)
+        assert old_span > 350.0, "Sanity check: old code WOULD have been wrong"
+
+        # New code: circular range gives ~0.8° span
+        lo, hi = _circular_lon_range(lons)
+        new_span = hi - lo
+        assert new_span < 5.0, f"Fix failed: got {new_span}° span"
