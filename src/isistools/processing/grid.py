@@ -15,7 +15,12 @@ import numpy as np
 import pvl
 from pyproj import CRS, Transformer
 
-from isistools.geo.projections import mapping_to_crs
+from isistools.geo.projections import (
+    _to_meters,
+    mapping_to_crs,
+    normalize_latitude_from_mapping,
+    normalize_longitude_from_mapping,
+)
 
 # pyproj raises an error when transforming between Earth (EPSG:4326) and
 # non-Earth CRS (e.g. Mars projections). This is expected for planetary work.
@@ -98,6 +103,42 @@ def grid_from_map_file(
 
     crs = mapping_to_crs(mapping)
 
+    # Parse body radii from the Mapping group so we can convert
+    # Planetographic latitudes back to Planetocentric for CSM. The
+    # mapping_to_crs call above has already enforced that these exist.
+    eq_radius_m = _to_meters(mapping["EquatorialRadius"])
+    polar_radius_m = _to_meters(mapping.get("PolarRadius", eq_radius_m))
+
+    # Read and warn about non-default latitude/longitude conventions.
+    # csm2map internally uses Planetocentric / PositiveEast / 360.
+    lat_type = str(mapping.get("LatitudeType", "Planetocentric")).strip()
+    lon_direction = str(mapping.get("LongitudeDirection", "PositiveEast")).strip()
+    lon_domain = mapping.get("LongitudeDomain", 360)
+    needs_lat_convert = lat_type.lower() not in ("planetocentric", "centric")
+    needs_lon_convert = lon_direction.lower().replace(" ", "") not in (
+        "positiveeast",
+        "pe",
+        "east",
+    ) or str(lon_domain).strip() not in ("360",)
+    if needs_lat_convert:
+        import warnings
+
+        warnings.warn(
+            f"MAP file uses LatitudeType={lat_type!r}; csm2map internally works "
+            f"in Planetocentric. Converting MinimumLatitude/MaximumLatitude via "
+            f"the body's {eq_radius_m:.1f}/{polar_radius_m:.1f} m ellipsoid.",
+            stacklevel=2,
+        )
+    if needs_lon_convert:
+        import warnings
+
+        warnings.warn(
+            f"MAP file uses LongitudeDirection={lon_direction!r} / "
+            f"LongitudeDomain={lon_domain!r}; csm2map internally uses "
+            f"PositiveEast / 360. Converting MinimumLongitude/MaximumLongitude.",
+            stacklevel=2,
+        )
+
     # Resolution
     if resolution_override is not None:
         res = resolution_override
@@ -136,11 +177,25 @@ def grid_from_map_file(
     if has_upper_left and n_samples and n_lines:
         x_ul = float(mapping["UpperLeftCornerX"])
         y_ul = float(mapping["UpperLeftCornerY"])
-        # Ground range (keep original lat/lon for reference)
-        lat_min = float(mapping.get("MinimumLatitude", 0.0))
-        lat_max = float(mapping.get("MaximumLatitude", 0.0))
-        lon_min = float(mapping.get("MinimumLongitude", 0.0))
-        lon_max = float(mapping.get("MaximumLongitude", 0.0))
+        # Ground range — convert to csm2map's internal convention
+        # (Planetocentric / PositiveEast / 360°) if the MAP file uses
+        # a different one. The conversion is a no-op for the common
+        # case (matches the MAP files we write ourselves).
+        lat_min_raw = float(mapping.get("MinimumLatitude", 0.0))
+        lat_max_raw = float(mapping.get("MaximumLatitude", 0.0))
+        lon_min_raw = float(mapping.get("MinimumLongitude", 0.0))
+        lon_max_raw = float(mapping.get("MaximumLongitude", 0.0))
+        lat_min = float(
+            normalize_latitude_from_mapping(lat_min_raw, mapping, eq_radius_m, polar_radius_m)
+        )
+        lat_max = float(
+            normalize_latitude_from_mapping(lat_max_raw, mapping, eq_radius_m, polar_radius_m)
+        )
+        lon_min = float(normalize_longitude_from_mapping(lon_min_raw, mapping))
+        lon_max = float(normalize_longitude_from_mapping(lon_max_raw, mapping))
+        # Positive-west flip reverses the min/max ordering — swap back.
+        if lon_max < lon_min:
+            lon_min, lon_max = lon_max, lon_min
 
         import rasterio.transform
 
@@ -168,11 +223,32 @@ def grid_from_map_file(
             lon_max=lon_max,
         )
 
-    # Ground range
-    lat_min = _get_range(mapping, "MinimumLatitude", camera_lat_range, 0)
-    lat_max = _get_range(mapping, "MaximumLatitude", camera_lat_range, 1)
-    lon_min = _get_range(mapping, "MinimumLongitude", camera_lon_range, 0)
-    lon_max = _get_range(mapping, "MaximumLongitude", camera_lon_range, 1)
+    # Ground range — read raw from MAP file or fall back to camera range
+    # (which is already Planetocentric / PositiveEast from
+    # _derive_ground_range), then normalize to csm2map's internal
+    # convention when the value came from the MAP file.
+    lat_min_raw = _get_range(mapping, "MinimumLatitude", camera_lat_range, 0)
+    lat_max_raw = _get_range(mapping, "MaximumLatitude", camera_lat_range, 1)
+    lon_min_raw = _get_range(mapping, "MinimumLongitude", camera_lon_range, 0)
+    lon_max_raw = _get_range(mapping, "MaximumLongitude", camera_lon_range, 1)
+
+    if "MinimumLatitude" in mapping and needs_lat_convert:
+        lat_min = float(
+            normalize_latitude_from_mapping(lat_min_raw, mapping, eq_radius_m, polar_radius_m)
+        )
+        lat_max = float(
+            normalize_latitude_from_mapping(lat_max_raw, mapping, eq_radius_m, polar_radius_m)
+        )
+    else:
+        lat_min, lat_max = lat_min_raw, lat_max_raw
+
+    if "MinimumLongitude" in mapping and needs_lon_convert:
+        lon_min = float(normalize_longitude_from_mapping(lon_min_raw, mapping))
+        lon_max = float(normalize_longitude_from_mapping(lon_max_raw, mapping))
+        if lon_max < lon_min:
+            lon_min, lon_max = lon_max, lon_min
+    else:
+        lon_min, lon_max = lon_min_raw, lon_max_raw
 
     return grid_from_params(
         crs=crs,

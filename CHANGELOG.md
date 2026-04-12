@@ -7,6 +7,118 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-04-12
+
+Bug fix + roadmap refresh. Two items land together because they were
+identified in the same post-0.8.0 fresh-view code review and both
+inform near-term planning decisions.
+
+### Fixed
+
+- **Silent Planetographic latitude bug in ISIS MAP files**. `grid_from_map_file`
+  previously ignored the `LatitudeType`, `LongitudeDirection`, and
+  `LongitudeDomain` keywords in ISIS MAP files: any file that specified
+  `LatitudeType = Planetographic` was silently treated as planetocentric,
+  producing a ~0.3° latitude shift on Mars at mid-latitudes — a ~17–20 km
+  ground-location error with no warning.
+
+  `grid_from_map_file` now reads these keywords and converts the
+  `MinimumLatitude` / `MaximumLatitude` / `MinimumLongitude` /
+  `MaximumLongitude` values to csm2map's internal convention
+  (Planetocentric / PositiveEast / 360° domain) using the body's own
+  `EquatorialRadius` / `PolarRadius` from the same Mapping group. When
+  a conversion happens a `UserWarning` is emitted so the conversion is
+  visible in the user's output.
+
+  Applies to both the explicit `MinimumLatitude` / `MaximumLatitude`
+  code path and the `UpperLeftCornerX` / `UpperLeftCornerY`
+  code path. Longitude ordering (swapped min/max after a positive-west
+  flip) is handled correctly.
+
+  The bug was flagged as a latent risk in `docs/csm2map-design.md` §6
+  of 0.7.0; that §6 entry is now closed and this release's fix is the
+  reference implementation.
+
+  The fix is bit-for-bit behavior-preserving for the common case
+  (Planetocentric / PositiveEast / 360° — which is what csm2map itself
+  writes in its own MAP files and what the F05 benchmark harness
+  uses). The F05 regression output is byte-for-byte identical to
+  0.8.0. Only MAP files using non-default conventions are affected.
+
+### Added
+
+- **Pure-geometry conversion helpers** in `isistools.geo.projections`:
+    - `planetographic_to_planetocentric(lat_deg, eq_radius, polar_radius)`
+    - `planetocentric_to_planetographic(lat_deg, eq_radius, polar_radius)`
+    - `normalize_longitude(lon_deg, *, direction=..., domain=...)`
+    - `normalize_latitude_from_mapping(lat_deg, mapping, eq, polar)`
+    - `normalize_longitude_from_mapping(lon_deg, mapping)`
+
+  All helpers are pure Python/numpy, handle both scalar and
+  vectorized inputs, short-circuit at the poles, and are identity
+  on spherical bodies. No SPICE dependency.
+
+- **`tests/test_latlon_conventions.py`** — 22 new regression tests:
+    - Unit-level: sphere identity, equator/poles edge cases, Mars 45°
+      known value, scalar/vectorized round-trip tests.
+    - Mapping-level: default-is-planetocentric, explicit-planetocentric
+      no-op, Planetographic converts, junk `LatitudeType` rejected.
+    - **Integration-level: the same physical Mars ground patch
+      described in two different conventions (Planetocentric vs
+      Planetographic, PositiveEast vs PositiveWest) now produces
+      identical csm2map-internal grids** — the explicit regression
+      test for the bug being fixed.
+    - Silent-path test: a MAP file in the default convention must
+      NOT emit any conversion warning.
+
+  Test count: 34 → 56.
+
+### Documentation
+
+- **`docs/plans/gpu-acceleration.md` rewritten** with a current baseline.
+  The plan now lives in `docs/plans/` (tracked in git) instead of the
+  `Plans/` scratch directory, so it persists across releases and is
+  discoverable in the repo.
+  The 0.7.0 draft had stale numbers (11 s total, 3.5 s CSM, 3.0 s
+  resample) and recommended "thread the CSM loop" as a quick win
+  that is now known to be a no-op on csmapi (SWIG GIL-held). The
+  revised plan:
+    - Replaces the baseline with the 0.8.0 F05 warm-cache re-profile
+      (44.6 s total, 12.2 s coord_transform = 27.3%, 28.7 s resample
+      = 64.3%, everything else < 5%).
+    - Retires the CSM-threading quick-win section; notes that the
+      scaffolding is retained in case upstream csmapi releases the
+      GIL in a future version.
+    - Rerecommends torch MPS `grid_sample` as the single GPU backend
+      (drops cupy because it has no Apple Silicon support), targeting
+      resample at 28.7 s → ~3 s for a ~2.4× overall speedup ceiling.
+    - Explicitly prioritizes the hybrid-pattern-prototype prerequisites
+      (CSM state load/save, 1 day) AHEAD OF GPU work because unlocking
+      a new capability has higher ROI than 2× speedup on existing one.
+    - Adds open questions about JANUS workload characteristics —
+      framing camera at 2000×2000 may already be CPU-fast enough,
+      profile it before committing to GPU engineering.
+
+### Performance measurements
+
+Added to the plan: a freshly-measured 3-run F05 profile on 0.8.0
+(warm cache, averaged, discarding the first cold run). Absolute
+numbers:
+
+| Stage | Time | % |
+|---|---:|---:|
+| load_camera | 1.28 s | 2.9% |
+| dem_open | 0.13 s | 0.3% |
+| build_grid | 0.01 s | 0.0% |
+| coord_transform | 12.2 s | 27.3% |
+| read_input | 0.71 s | 1.6% |
+| resample | 28.7 s | 64.3% |
+| write_output | 1.50 s | 3.4% |
+| **total** | **44.6 s** | |
+
+Resample at 64% of wall time makes GPU resample the single largest
+optimization opportunity; see the revised plan for the follow-through.
+
 ## [0.8.0] - 2026-04-12
 
 Body-agnostic refactor. Before 0.8.0, csm2map silently assumed Mars —
@@ -474,7 +586,8 @@ for a future release.
 - Typer CLI with commands: `mosaic`, `tiepoints`, `footprints`,
   `cnet-info`.
 
-[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/michaelaye/isistools/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/michaelaye/isistools/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/michaelaye/isistools/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/michaelaye/isistools/compare/v0.6.0...v0.7.0
