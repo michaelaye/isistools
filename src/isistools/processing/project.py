@@ -365,17 +365,25 @@ def _build_grid(
             resolution_override=resolution,
         )
 
-    if projection is None:
-        # Default to equirectangular with THIS body's radii (not Mars).
-        projection = (
-            f"+proj=eqc +lat_ts=0 +lon_0=0 "
-            f"+a={body.radius_equatorial_m} +b={body.radius_polar_m} "
-            f"+units=m +no_defs +type=crs"
-        )
-
     if lat_range is None or lon_range is None:
         # Try to derive from the camera model image corners
         lat_range, lon_range = _derive_ground_range(model)
+
+    if projection is None:
+        # Default to equirectangular centered on the image. Using the
+        # image's center latitude as lat_ts makes the local scale
+        # isotropic at the image center (pixels are square there);
+        # using the image's center longitude as lon_0 keeps the map
+        # coordinates small and numerically well-conditioned. This
+        # matches what ISIS cam2map does when auto-generating the
+        # projection from the camera model.
+        center_lat = (lat_range[0] + lat_range[1]) / 2.0
+        center_lon = (lon_range[0] + lon_range[1]) / 2.0
+        projection = (
+            f"+proj=eqc +lat_ts={center_lat} +lon_0={center_lon} "
+            f"+a={body.radius_equatorial_m} +b={body.radius_polar_m} "
+            f"+units=m +no_defs +type=crs"
+        )
 
     if resolution is None:
         # Auto-compute from the camera model's native ground sample
