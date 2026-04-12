@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-04-12
+
+Zero-flags workflow, ISIS-compatible metadata sidecar, and longitude
+wraparound fix. csm2map can now be invoked with just an input and
+output path — no MAP file, no `-r` flag, no `--minlat`/`--maxlat`
+needed. Everything is derived from the cube's own camera model and
+ALE ISD.
+
+### Added
+
+- **Zero-flags workflow**: `isistools csm2map input.cub output.tif`
+  now works with no other arguments. Resolution is auto-computed from
+  the camera model's ground sample distance at the image center
+  (matching ISIS `cam2map`'s default behavior), bounds are derived
+  from the camera footprint, projection is centered on the image,
+  shape model and body info come from the cube label and ALE ISD.
+- **Auto-resolution from camera GSD** (`compute_ground_sample_distance`
+  in `camera.py`): evaluates `imageToGround` at the center pixel and
+  its two neighbors (+1 line, +1 sample), computes the ECEF distance,
+  and returns the average of the line-direction and sample-direction
+  GSDs. Verified on F05 CTX: 5.74 m/px vs ISIS `camrange`'s 5.3–5.4
+  m/px range (ours is at image center; ISIS reports best-case).
+- **ISIS-compatible Mapping PVL sidecar** (`write_mapping_pvl` in
+  `writers.py`): every GeoTIFF output is now accompanied by a `.pvl`
+  file containing the same metadata ISIS `cam2map` writes into a
+  projected cube's Mapping group: projection name, body radii,
+  lat/lon type and direction, ground range, pixel resolution, and
+  `UpperLeftCornerX`/`Y`. This makes the GeoTIFF interoperable with
+  ISIS workflows and gives users transitioning from `cam2map` a
+  familiar metadata format. The sidecar also serves as a MAP file
+  for subsequent csm2map runs on overlapping cubes — it carries the
+  exact grid origin, so multiple cubes projected with the same
+  sidecar share a pixel-aligned grid (solving the grid-snap issue
+  documented earlier in this session).
+- **`-h` help shortcut** alongside `--help` for all CLI commands via
+  Typer's `context_settings`.
+
+### Fixed
+
+- **Auto-projection now centers on the image**, not on (0°, 0°).
+  When no MAP file and no `--projection` flag are given, the
+  equirectangular CRS uses the image's center latitude for `lat_ts`
+  (isotropic local pixel scale) and center longitude for `lon_0`
+  (small map coordinates). Previously `lat_ts=0, lon_0=0` put the
+  projection origin up to 180° away from the data — massive
+  distortion and unnecessary numerical range.
+- **Antimeridian crossing in `_derive_ground_range`**. MRO is a
+  polar orbiter; CTX routinely images strips that cross the ±180°
+  boundary. The old code did `min(lons)`/`max(lons)` on raw
+  `arctan2` output, producing a 358° grid for a 2° strip. Fixed
+  via circular statistics: the circular mean of all probe longitudes
+  is computed, then offsets are measured in wrapped [-180, +180]
+  space. 6 new regression tests cover antimeridian crossing (sparse
+  + dense), prime meridian crossing, near-pole scattered longitudes,
+  and an explicit old-bug-would-fail assertion.
+- **PVL sidecar longitude normalization**: `MinimumLongitude`,
+  `MaximumLongitude`, and `CenterLongitude` are normalized to the
+  declared [0, 360) domain via `% 360`. Previously
+  `_derive_ground_range` could return values like `lon_max=181.5`
+  for an antimeridian-crossing strip, which would violate the
+  `LongitudeDomain = 360` declaration in the PVL.
+
+### Changed
+
+- **`--resolution` / `-r` is now optional** even without a MAP file.
+  If omitted, auto-computed from the camera GSD (see "Added" above).
+  The old behavior was to raise `"Must specify resolution or use a
+  MAP file"`.
+
+### Performance measurements
+
+The auto-resolution path adds one extra `imageToGround` call (at the
+image center ± 1 pixel) — negligible cost (~0.1 ms). No change to
+the projection pipeline itself. F05 wall time is unchanged vs 0.8.1.
+
+### Tests
+
+- 6 new longitude-wraparound tests in `test_latlon_conventions.py`.
+- Test count: 56 → 62.
+
 ## [0.8.1] - 2026-04-12
 
 Bug fix + roadmap refresh. Two items land together because they were
@@ -586,7 +666,8 @@ for a future release.
 - Typer CLI with commands: `mosaic`, `tiepoints`, `footprints`,
   `cnet-info`.
 
-[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/michaelaye/isistools/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/michaelaye/isistools/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/michaelaye/isistools/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/michaelaye/isistools/compare/v0.7.0...v0.7.1
