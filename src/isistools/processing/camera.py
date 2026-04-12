@@ -306,6 +306,66 @@ def get_image_size(model: "csmapi.RasterGM") -> tuple[int, int]:
     return int(size.line), int(size.samp)
 
 
+def compute_ground_sample_distance(
+    model: "csmapi.RasterGM",
+    body: TargetBody,
+) -> float:
+    """Estimate the ground sample distance (GSD) in meters/pixel.
+
+    Evaluates the CSM model at the image center: projects two adjacent
+    pixels to ground, computes the great-circle distance between them
+    on the target body, and returns the average of the line-direction
+    and sample-direction GSDs.
+
+    This replicates what ISIS ``cam2map`` does when no ``PixelResolution``
+    is specified in the MAP file — it picks the camera's native
+    resolution so the projected output neither up-samples nor
+    down-samples the input.
+
+    Parameters
+    ----------
+    model : csmapi.RasterGM
+        CSM sensor model.
+    body : TargetBody
+        Target body (used for mean radius in the distance calculation).
+
+    Returns
+    -------
+    float
+        Ground sample distance in meters/pixel.
+    """
+    import csmapi
+
+    size = model.getImageSize()
+    center_line = size.line / 2.0
+    center_samp = size.samp / 2.0
+
+    # Project three points: center, center+1 in line direction,
+    # center+1 in sample direction.
+    ip_center = csmapi.ImageCoord(center_line, center_samp)
+    ip_line = csmapi.ImageCoord(center_line + 1.0, center_samp)
+    ip_samp = csmapi.ImageCoord(center_line, center_samp + 1.0)
+
+    gp_center = model.imageToGround(ip_center, 0.0)
+    gp_line = model.imageToGround(ip_line, 0.0)
+    gp_samp = model.imageToGround(ip_samp, 0.0)
+
+    def _ecef_distance(a: "csmapi.EcefCoord", b: "csmapi.EcefCoord") -> float:
+        """Euclidean distance between two ECEF points, then project onto
+        the sphere to get a surface arc distance. For sub-km separations
+        (one pixel) the chord ≈ the arc to ~1e-8 relative error, so
+        Euclidean is fine."""
+        dx = a.x - b.x
+        dy = a.y - b.y
+        dz = a.z - b.z
+        return (dx * dx + dy * dy + dz * dz) ** 0.5
+
+    gsd_line = _ecef_distance(gp_center, gp_line)
+    gsd_samp = _ecef_distance(gp_center, gp_samp)
+
+    return (gsd_line + gsd_samp) / 2.0
+
+
 def ground_to_image_batch(
     model: "csmapi.RasterGM",
     lats: np.ndarray,

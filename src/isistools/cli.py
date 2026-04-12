@@ -476,7 +476,13 @@ def csm2map(
     ] = None,
     resolution: Annotated[
         Optional[float],
-        typer.Option("--resolution", "-r", help="Pixel resolution in meters/pixel."),
+        typer.Option(
+            "--resolution",
+            "-r",
+            help="Pixel resolution in meters/pixel. If omitted, auto-computed "
+            "from the camera model's ground sample distance at the image center "
+            "(matching ISIS cam2map's default behavior).",
+        ),
     ] = None,
     minlat: Annotated[
         Optional[float],
@@ -565,10 +571,11 @@ def csm2map(
 
     \b
     Examples:
-      isistools csm2map input.cub output.tif --map equi.map
-      isistools csm2map input.cub output.tif -r 6.0
+      isistools csm2map input.cub output.tif                    # auto-resolution + auto-bounds
+      isistools csm2map input.cub output.tif --map equi.map     # use an ISIS MAP file
+      isistools csm2map input.cub output.tif -r 6.0             # explicit 6 m/px
       isistools csm2map input.cub output.tif --map equi.map --dense --validate
-      isistools csm2map input.cub output.tif --map equi.map --shape-model ellipsoid
+      isistools csm2map input.cub output.tif --shape-model ellipsoid
     """
     try:
         from isistools.processing.project import project

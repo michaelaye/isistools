@@ -9,7 +9,12 @@ import numpy as np
 from rich.console import Console
 
 from isistools.io.cubes import read_isis_cube_raw
-from isistools.processing.camera import TargetBody, get_image_size, load_camera
+from isistools.processing.camera import (
+    TargetBody,
+    compute_ground_sample_distance,
+    get_image_size,
+    load_camera,
+)
 from isistools.processing.dem import DemRadiusSampler, resolve_shape_model
 from isistools.processing.grid import OutputGrid, grid_from_map_file, grid_from_params
 from isistools.processing.resample import Interpolation, resample
@@ -373,8 +378,11 @@ def _build_grid(
         lat_range, lon_range = _derive_ground_range(model)
 
     if resolution is None:
-        msg = "Must specify resolution (meters/pixel) or use a MAP file"
-        raise ValueError(msg)
+        # Auto-compute from the camera model's native ground sample
+        # distance, matching ISIS cam2map's default behavior when no
+        # PixelResolution is specified in the MAP file.
+        resolution = compute_ground_sample_distance(model, body)
+        console.print(f"  Auto-resolution from GSD: {resolution:.4f} m/px")
 
     return grid_from_params(
         crs=projection,
