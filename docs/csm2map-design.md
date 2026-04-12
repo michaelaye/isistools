@@ -435,6 +435,17 @@ coverage mismatch are the structural CSM vs CSPICE camera noise
 floor described in §3.1 — see `scripts/disagreement_analysis.md`
 for the detailed investigation.
 
+**F05 full-length regression (added 0.8.0):** a third validation on
+the full-length F05 CTX strip (5000 × 52224, producing 557M output
+pixels at 6.0 m/pix) confirms the optimizations in 0.7.0–0.8.x do
+not affect correctness: `cmp -s` on the 0.7.1 and 0.8.0 GeoTIFFs
+returns success (byte-for-byte identical). The 0.8.0 body-agnostic
+refactor (replacing hardcoded Mars radii with `TargetBody.from_isd`)
+and the 0.8.1 planetographic fix both preserve Mars output exactly.
+This strip also demonstrated a 13× speedup over ISIS `cam2map`
+(44.6 s vs 556 s), extending the 5–6× range observed on the shorter
+J08 and F09 strips.
+
 ## 5. Performance
 
 Single-image wall-clock on an Apple Silicon laptop (8 cores),
@@ -490,11 +501,13 @@ Performance headroom not yet used:
    mode.
 5. **No stereo / DEM generation**: `csm2map` is a projection tool
    only. Stereo DEMs still require ASP.
-6. **No Planetocentric/Planetographic conversion when the MAP file
-   disagrees with the CSM model**: ISIS will warn you and convert;
-   we currently trust the MAP file. This hasn't bitten us on CTX
-   because the MAP files are always planetocentric but it's a
-   latent bug waiting for a planetographic MAP input.
+6. **Planetocentric/Planetographic conversion (FIXED in 0.8.1)**:
+   `grid_from_map_file` now reads `LatitudeType`, `LongitudeDirection`,
+   and `LongitudeDomain` from MAP files and normalizes to csm2map's
+   internal convention (planetocentric / positive-east / 360°) via
+   helpers in `geo/projections.py`. A `UserWarning` is emitted when
+   conversion happens. The silent ~20 km ground-location error on
+   Mars at mid-latitudes documented in earlier versions is fixed.
 7. **`--clip-to-footprint` does not match ISIS `cam2map`** (historical
    note — the flag was added under a hypothesis that turned out to
    be wrong). Early in development we saw a ~3% coverage gap vs
@@ -523,7 +536,7 @@ Performance headroom not yet used:
   ecosystem. `jigsaw`, `qmos`, `findimageoverlaps`, `autoseed`, etc.
   continue to live in ISIS and that's fine. If someone wants an
   ISIS-free pipeline end-to-end they need the hybrid-pattern
-  prototype (see `Plans/hybrid-pattern-prototype.md`), not just
+  prototype (see `docs/plans/hybrid-pattern-prototype.md`), not just
   csm2map.
 - Being a drop-in binary replacement for `cam2map`. We match the
   behavior that matters (DN values, coverage, camera geometry) but
@@ -539,11 +552,11 @@ Performance headroom not yet used:
 
 ## 8. Future work
 
-Tracked as separate plan documents in `Plans/`:
+Tracked as separate plan documents in `docs/plans/`:
 
-- `Plans/hybrid-pattern-prototype.md` — controlled multi-image
+- `docs/plans/hybrid-pattern-prototype.md` — controlled multi-image
   mosaicking via arosics + a CSM-native pose refiner, ISIS-free
-- `Plans/gpu-acceleration.md` — torch MPS / cupy backends for
+- `docs/plans/gpu-acceleration.md` — torch MPS / cupy backends for
   resample and bilinear upsample, if the CPU path ever becomes the
   bottleneck
 

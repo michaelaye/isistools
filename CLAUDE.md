@@ -60,7 +60,7 @@ The codebase follows a three-layer pattern: **I/O → Plotting → Apps**
 
 ### Processing layer (`processing/`)
 CSM-based replacement for ISIS `cam2map`, exposed as the `csm2map` CLI command. Pipeline: camera model → output grid → coordinate transform → resample → GeoTIFF.
-- `camera.py` — Loads CSM RasterGM sensor models from spiceinit'd cubes via ale/usgscsm (no knoten dependency). Provides `ground_to_image_batch()` for coordinate mapping (the performance bottleneck — Python loop over CSM calls).
+- `camera.py` — Loads CSM RasterGM sensor models from spiceinit'd cubes via ale/usgscsm (no knoten dependency). `load_camera()` returns `(csmapi.RasterGM, TargetBody)` — the `TargetBody` frozen dataclass carries the target body's ellipsoid (radii, NAIF ID, mean radius) parsed from ALE's ISD. Provides `ground_to_image_batch()` for coordinate mapping (the performance bottleneck — Python loop over CSM calls).
 - `grid.py` — `OutputGrid` dataclass defining the output raster (CRS, affine transform, dimensions). Built from ISIS MAP files or explicit parameters.
 - `transform.py` — `CoordinateMap` mapping output pixels to input pixels. Two strategies: dense (every pixel, slow) and coarse-grid + bilinear interpolation (production path, step=16 default).
 - `resample.py` — Applies coordinate map via `scipy.ndimage.map_coordinates`. Supports nearest/bilinear/bicubic.
@@ -95,8 +95,8 @@ When releasing a new version, always do all three:
 - **ale**: Use `ale.loads(cube_path)` (not `ale.load()` which is deprecated). Returns ISD JSON string. Install from conda-forge.
 - **usgscsm/csmapi**: We call the CSM plugin API directly (no knoten dependency — it has broken conda packaging). `import usgscsm` registers the plugin, then `csmapi.Isd()` + `plugin.constructModelFromISD()` builds the model. Install via `conda install -c conda-forge usgscsm`.
 - **csmapi**: Key classes: `RasterGM`, `ImageCoord(line, samp)`, `EcefCoord(x, y, z)`. CSM is 0-based (pixel center at 0.0, 0.0); ISIS is 1-based (pixel center at 1, 1). **Half-pixel offset matters.**
-- **Coordinate conventions (csm2map)**: CSM and pyproj use planetocentric lat, positive-east lon. ISIS MAP files may specify planetographic lat or positive-west lon — conversion is NOT yet implemented (first thing to fix before validation works). See `cam2map_update/CLAUDE.md` for full details.
-- **BODY499_RADII**: `get_target_radii()` currently hardcodes Mars NAIF ID 499. Needs generalization for non-Mars targets.
+- **Coordinate conventions (csm2map)**: CSM and pyproj use planetocentric lat, positive-east lon. ISIS MAP files may specify planetographic lat or positive-west lon — 0.8.1 adds conversion via `planetographic_to_planetocentric()` and `normalize_longitude()` in `geo/projections.py`. `grid_from_map_file` reads `LatitudeType`, `LongitudeDirection`, and `LongitudeDomain` from the MAP file and normalizes automatically, emitting a `UserWarning` when conversion happens.
+- **Target body handling**: 0.8.0+ is body-agnostic. `TargetBody.from_isd()` extracts radii and NAIF ID from ALE's ISD; no Mars-specific constants remain in `src/`. Before 0.8.0, `get_target_radii()` hardcoded Mars NAIF ID 499.
 
 ## Style
 

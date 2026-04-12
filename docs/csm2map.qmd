@@ -8,8 +8,10 @@ Map-project an ISIS cube into a GeoTIFF using the Community Sensor Model
 (CSM) instead of ISIS's CSPICE-based camera. Drop-in replacement for
 ISIS `cam2map`, validated against ISIS 9.0.0 output on multiple CTX
 images at **99.95% coverage match and 100% agreement within 0.01 DN**,
-while running roughly **5–13× faster** than ISIS `cam2map` (depending
-on cube length — the larger the strip, the larger the speedup).
+while running **5–13× faster** than ISIS `cam2map` (5.3× on J08 at
+2536×12288, 6.5× on F09 at 5000×7168, 13× on full-length F05 at
+5000×52224 — the larger the strip, the larger the speedup because
+the per-image ALE/camera overhead is amortized over more pixels).
 
 By default `csm2map` reads the cube's `Kernels.ShapeModel` keyword and
 uses the same DEM that ISIS would (e.g. the MOLA DEM for Mars), so the
