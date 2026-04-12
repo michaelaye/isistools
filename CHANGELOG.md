@@ -7,6 +7,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-04-12
+
+Body-agnostic refactor. Before 0.8.0, csm2map silently assumed Mars —
+a JANUS, LRO, or Europa Clipper cube would have been projected with
+Mars radii and the user would have had no way to notice. 0.8.0 pulls
+the target body's ellipsoid directly from ALE's ISD and threads it
+through the pipeline with zero hardcoded literals.
+
+Output on Mars inputs is **bit-for-bit identical** to 0.7.1. Verified
+end-to-end on a full-length F05 CTX cube (557M pixels): `cmp -s` on the
+two GeoTIFFs returns success.
+
+### BREAKING
+
+- **`isistools.processing.camera.load_camera()` now returns a tuple**
+  `(csmapi.RasterGM, TargetBody)` instead of just the model. Any code
+  that unpacks `load_camera(cube)` must be updated. The CLI is
+  unaffected. Only `isistools.processing.project.project()` called
+  this symbol directly, and it has been updated to match.
+- **`isistools.processing.dem.DemRadiusSampler.__init__`'s
+  `fallback_radius` is now a required keyword argument** — the old
+  Mars-specific default (`3389526.7`) is gone. Callers must pass the
+  target body's mean radius explicitly.
+- **`isistools.geo.projections.mapping_to_crs()` raises
+  `ValueError`** when the Mapping group lacks `EquatorialRadius`.
+  Previous versions silently defaulted to Mars radii, which silently
+  mis-projected any non-Mars Mapping group. If you have a MAP file
+  without explicit radii, add them.
+- **`isistools.processing.camera.get_target_radii()` has been
+  removed.** Its body-specific information is now carried on the
+  `TargetBody` returned from `load_camera()`. There was no public
+  caller of `get_target_radii` outside the csm2map pipeline itself.
+- **`isistools.processing.grid.grid_from_map_file()` raises
+  `ValueError`** when a MAP file uses `Scale` (pixels/degree) but
+  lacks `EquatorialRadius`. Scale→resolution conversion needs the
+  body's equatorial radius and previously silently used Mars.
+
+### Added
+
+- **`isistools.processing.camera.TargetBody`** (new public
+  dataclass): frozen dataclass describing a target body's
+  ellipsoid and identity:
+    - `name` (str, e.g. `"MARS"`, `"EUROPA"`)
+    - `naif_id` (int, e.g. 499, 502, 301)
+    - `radius_equatorial_m`, `radius_polar_m`, `radius_mean_m`
+      (all in meters)
+  Built via the `TargetBody.from_isd(isd_dict, target_name=...)`
+  classmethod, which parses ALE's native ISD format and converts
+  km → m automatically. Includes a cross-check that validates the
+  ISD's top-level `radii` dict against
+  `naif_keywords.BODY<code>_RADII` and raises `ValueError` if they
+  disagree by more than 1 meter (catches stale SPICE blobs and
+  corrupted cubes).
+- **csm2map now prints the target body on startup** — the output
+  log now shows `Target: <NAME> (NAIF <id>)  radii eq=... polar=...`
+  so the user can confirm the right body is being used. No more
+  silent Mars assumption.
+- **`tests/test_target_body.py`** (12 new regression tests): covers
+  Mars / Moon / Europa / a hypothetical `BODY999` through
+  `TargetBody.from_isd`, unit conversion (km vs m), the
+  ISD-vs-BODY_RADII cross-check, name uppercasing, and the
+  `mapping_to_crs` hardening. Test count: 22 → 34.
+
+### Changed
+
+- **`load_camera()` reads and caches the ISD JSON once** — the
+  same string is both handed to `csmapi.Isd()` (via the JSON file
+  on disk) and parsed to a Python dict (for `TargetBody`). No
+  duplicate ALE calls, no second SPICE query.
+- **`project.project()` pipeline simplified**: the old separate
+  `get_target_radii()` stage is gone. The `TargetBody` comes out
+  of `load_camera()` already populated, so the `target_radii`
+  timing stage has been removed from `--profile` output.
+- **`_build_grid()` constructs its default projection string at
+  runtime** from `body.radius_equatorial_m` / `body.radius_polar_m`
+  instead of the hardcoded Mars ellipsoid. When no MAP file and no
+  explicit `--projection` flag are given, csm2map now picks the
+  correct body automatically.
+
+### Fixed
+
+- **Hardcoded Mars radii removed from four sites**:
+    - `processing/camera.py::get_target_radii` (deleted entirely)
+    - `processing/project.py::_build_grid` default projection string
+    - `processing/dem.py::DemRadiusSampler.fallback_radius` default
+    - `geo/projections.py::mapping_to_crs` silent default
+    - `processing/grid.py::grid_from_map_file` Scale-handling
+      branch fallback
+  A repo-wide grep for `BODY499`, `3396190`, `3376200`, `3389526`
+  in `src/` now returns **zero matches** except for one comment in
+  `grid.py` documenting the previous behavior for future readers.
+
+### Validation
+
+- **F05 CTX bit-identical regression**: the 0.8.0 output for the
+  F05 full-length CTX cube (1.0 GB input, 557M-pixel output) is
+  byte-for-byte identical to the 0.7.1 reference output. Verified
+  with `cmp -s`. The body-agnostic refactor has zero behavior
+  change on Mars data, which is the only target csm2map has ever
+  been run against.
+
 ## [0.7.1] - 2026-04-12
 
 Documentation-only patch release. No code behavior changes — all
@@ -373,7 +474,8 @@ for a future release.
 - Typer CLI with commands: `mosaic`, `tiepoints`, `footprints`,
   `cnet-info`.
 
-[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/michaelaye/isistools/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/michaelaye/isistools/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/michaelaye/isistools/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/michaelaye/isistools/compare/v0.5.3...v0.6.0

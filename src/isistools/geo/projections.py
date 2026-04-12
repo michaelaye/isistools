@@ -37,6 +37,17 @@ def mapping_to_crs(mapping: dict) -> CRS:
     -------
     pyproj.CRS
         Coordinate reference system for the projection.
+
+    Raises
+    ------
+    ValueError
+        If the Mapping group does not carry an ``EquatorialRadius``
+        keyword. Previous versions silently defaulted to Mars radii,
+        which silently mis-projected any non-Mars MAP file. Callers must
+        now either provide explicit body radii in the Mapping group or
+        build the CRS themselves with a known body.
+    NotImplementedError
+        If the projection name is not in :data:`ISIS_TO_PROJ4`.
     """
     proj_name = mapping.get("ProjectionName", "Equirectangular")
     proj4_id = ISIS_TO_PROJ4.get(proj_name)
@@ -44,8 +55,18 @@ def mapping_to_crs(mapping: dict) -> CRS:
         msg = f"Projection '{proj_name}' not supported; add to ISIS_TO_PROJ4"
         raise NotImplementedError(msg)
 
-    # Target body radius
-    eq_radius = _to_meters(mapping.get("EquatorialRadius", 3396190.0))
+    # Target body radius — required; no silent Mars default.
+    if "EquatorialRadius" not in mapping:
+        target = mapping.get("TargetName", "<unknown>")
+        msg = (
+            f"Mapping group for target {target!r} is missing EquatorialRadius. "
+            f"Cannot build a CRS without explicit body radii. Previous versions "
+            f"silently defaulted to Mars; this version refuses to guess. Add "
+            f"EquatorialRadius (and PolarRadius) to the MAP file or Mapping "
+            f"group, or construct the CRS via TargetBody in csm2map."
+        )
+        raise ValueError(msg)
+    eq_radius = _to_meters(mapping["EquatorialRadius"])
     pol_radius = _to_meters(mapping.get("PolarRadius", eq_radius))
 
     # Center coordinates

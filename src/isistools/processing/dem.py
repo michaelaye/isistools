@@ -43,9 +43,12 @@ class DemRadiusSampler:
     ----------
     dem_path : path-like
         Path to the DEM cube (e.g. ``$ISISDATA/base/dems/molaMarsPlanetaryRadius0005.cub``).
-    fallback_radius : float, optional
+    fallback_radius : float
         Radius (m) to use for points where the DEM has nodata or for points
-        outside the DEM coverage. Defaults to the mean Mars radius.
+        outside the DEM coverage. **Required, no default.** Callers should
+        pass the target body's mean radius (``TargetBody.radius_mean_m``);
+        hardcoding a Mars-specific default would silently miss-project
+        non-Mars cubes.
 
     Notes
     -----
@@ -55,7 +58,7 @@ class DemRadiusSampler:
     file IO; switching to a different region triggers a new window read.
     """
 
-    def __init__(self, dem_path: str | Path, fallback_radius: float = 3389526.7) -> None:
+    def __init__(self, dem_path: str | Path, fallback_radius: float) -> None:
         self.dem_path = Path(dem_path)
         if not self.dem_path.exists():
             msg = f"DEM cube not found: {self.dem_path}"

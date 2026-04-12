@@ -3,12 +3,20 @@
 This module wraps ale + usgscsm to produce a CSM sensor model from a
 spiceinit'd ISIS cube.  The resulting model supports groundToImage() and
 imageToGround() calls needed for map projection.
+
+Alongside the CSM model, ``load_camera`` also returns a :class:`TargetBody`
+describing the target body's ellipsoid (semi-axes, mean radius, NAIF ID).
+This lets csm2map project cubes from any mission without hardcoding Mars-
+specific constants — the body info comes straight from ALE's ISD, which
+is computed from the same SPICE kernels the camera model itself uses.
 """
 
 import ctypes
+import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -16,6 +24,107 @@ if TYPE_CHECKING:
     import csmapi
 
 _CSM_PLUGIN_LOADED = False
+
+
+@dataclass(frozen=True)
+class TargetBody:
+    """Target body ellipsoid + identity, parsed from an ALE ISD.
+
+    All radii are stored in **meters** regardless of the ISD unit, so
+    downstream code never has to unit-convert.
+
+    Attributes
+    ----------
+    name : str
+        Human-readable target name (e.g. ``"MARS"``, ``"EUROPA"``). Taken
+        from the cube label's ``IsisCube.Instrument.TargetName`` when
+        available, otherwise synthesized from the NAIF body code as
+        ``"BODY<naif_id>"``.
+    naif_id : int
+        NAIF body code (e.g. 499 = Mars, 301 = Moon, 502 = Europa). Read
+        directly from ``isd["naif_keywords"]["BODY_CODE"]``.
+    radius_equatorial_m : float
+        Equatorial (semi-major) radius in meters.
+    radius_polar_m : float
+        Polar (semi-minor) radius in meters.
+    radius_mean_m : float
+        ``(2 * radius_equatorial_m + radius_polar_m) / 3`` — the IAU
+        convention for a volume-equivalent spherical radius. Used as the
+        fallback radius for DEM lookups where the DEM reports nodata.
+    """
+
+    name: str
+    naif_id: int
+    radius_equatorial_m: float
+    radius_polar_m: float
+    radius_mean_m: float
+
+    @classmethod
+    def from_isd(cls, isd: dict[str, Any], target_name: str | None = None) -> "TargetBody":
+        """Construct a :class:`TargetBody` from an ALE ISD dict.
+
+        Parameters
+        ----------
+        isd : dict
+            Parsed ALE ISD (e.g. ``json.loads(ale.loads(cube))``). Must
+            contain a top-level ``radii`` dict with ``semimajor``,
+            ``semiminor``, ``unit`` keys, plus a ``naif_keywords`` dict
+            carrying ``BODY_CODE``.
+        target_name : str, optional
+            Human-readable target name (normally the cube label's
+            ``Instrument.TargetName``). If omitted the body name is
+            synthesized from the NAIF ID as ``"BODY<naif_id>"``.
+
+        Raises
+        ------
+        KeyError
+            If required ISD fields are missing.
+        ValueError
+            If the ISD's ``radii`` dict uses an unrecognized unit, or if
+            the cube's ``NaifKeywords.BODY<code>_RADII`` cross-check
+            disagrees with ``isd["radii"]`` by more than 1 meter. This
+            catches stale SPICE blobs and corrupted cubes.
+        """
+        radii_block = isd["radii"]
+        unit = str(radii_block.get("unit", "km")).lower()
+        if unit in ("km", "kilometers"):
+            scale = 1000.0
+        elif unit in ("m", "meters"):
+            scale = 1.0
+        else:
+            msg = f"Unrecognized radii unit in ISD: {unit!r} (expected 'km' or 'm')"
+            raise ValueError(msg)
+
+        eq_m = float(radii_block["semimajor"]) * scale
+        polar_m = float(radii_block["semiminor"]) * scale
+
+        naif_kw = isd.get("naif_keywords", {})
+        naif_id = int(naif_kw["BODY_CODE"])
+
+        # Cross-check against the explicit BODY<code>_RADII keyword if
+        # present. Both values come from the same SPICE kernel load so
+        # they should agree to floating-point precision; a mismatch
+        # indicates corrupted blobs or a kernel mixup.
+        body_radii_key = f"BODY{naif_id}_RADII"
+        if body_radii_key in naif_kw:
+            br = naif_kw[body_radii_key]
+            br_eq_m = float(br[0]) * scale
+            br_polar_m = float(br[2]) * scale
+            if abs(br_eq_m - eq_m) > 1.0 or abs(br_polar_m - polar_m) > 1.0:
+                msg = (
+                    f"ISD radii {radii_block} disagree with {body_radii_key}={br} "
+                    f"(unit={unit}). Stale SPICE blob or corrupted cube?"
+                )
+                raise ValueError(msg)
+
+        name = (target_name or f"BODY{naif_id}").upper()
+        return cls(
+            name=name,
+            naif_id=naif_id,
+            radius_equatorial_m=eq_m,
+            radius_polar_m=polar_m,
+            radius_mean_m=(2.0 * eq_m + polar_m) / 3.0,
+        )
 
 
 def _ensure_csm_plugin_loaded() -> None:
@@ -69,13 +178,19 @@ def load_camera(
     cube_path: str | Path,
     spice_source: str = "isis",
     refresh_isd: bool = True,
-) -> "csmapi.RasterGM":
-    """Load a CSM RasterGM sensor model from a spiceinit'd ISIS cube.
+) -> tuple["csmapi.RasterGM", TargetBody]:
+    """Load a CSM RasterGM sensor model + target body info from an ISIS cube.
 
     Uses ale to generate an ISD (Instrument Support Data) from the cube,
     then iterates usgscsm plugins to construct a CSM model. This replaces
     the knoten.csm.create_csm() call to avoid the knoten dependency
     (which has a broken csmapi conda dep).
+
+    The same ISD is parsed in two ways: once as a ``csmapi.Isd`` object to
+    build the CSM model, once as a Python dict to populate a
+    :class:`TargetBody` with the body's ellipsoid and NAIF ID. Returning
+    both together makes csm2map body-agnostic — no downstream code has to
+    re-open the cube or query SPICE for radii.
 
     Parameters
     ----------
@@ -106,8 +221,12 @@ def load_camera(
 
     Returns
     -------
-    csmapi.RasterGM
+    model : csmapi.RasterGM
         A CSM raster ground-to-image sensor model.
+    body : TargetBody
+        Target body ellipsoid + NAIF ID, parsed from the same ISD that
+        built the model. Use this to feed ``DemRadiusSampler.fallback_radius``
+        and to build body-agnostic projection strings.
 
     Raises
     ------
@@ -116,6 +235,8 @@ def load_camera(
     """
     import ale
     import csmapi
+
+    from isistools.io.cubes import read_label
 
     _ensure_csm_plugin_loaded()
 
@@ -140,6 +261,28 @@ def load_camera(
             msg = f"Invalid spice_source={spice_source!r}; must be 'isis', 'naif', or 'auto'"
             raise ValueError(msg)
         isd_path.write_text(isd_str)
+    else:
+        isd_str = isd_path.read_text()
+
+    # Parse the ISD as a dict so we can extract body info without reading
+    # the file a second time. csmapi.Isd wants a filename, not a string,
+    # so we can't skip the write above — but we can skip re-reading the
+    # JSON file from disk by parsing the in-memory string here.
+    isd_dict = json.loads(isd_str)
+
+    # Pull the human-readable target name from the cube's Instrument
+    # group when available; fall back to "BODY<naif_id>" inside TargetBody.
+    target_name: str | None = None
+    try:
+        label = read_label(cube_path)
+        inst = label["IsisCube"]["Instrument"]
+        raw_target = inst.get("TargetName")
+        if raw_target is not None:
+            target_name = str(raw_target).strip()
+    except (KeyError, FileNotFoundError, OSError):
+        target_name = None
+
+    body = TargetBody.from_isd(isd_dict, target_name=target_name)
 
     isd = csmapi.Isd(cube_str)
 
@@ -151,7 +294,7 @@ def load_camera(
             if plugin.canModelBeConstructedFromISD(isd, model_name, warnings):
                 model = plugin.constructModelFromISD(isd, model_name)
                 if isinstance(model, csmapi.RasterGM):
-                    return model
+                    return model, body
 
     msg = f"No CSM plugin could construct a model from {cube_path}"
     raise RuntimeError(msg)
@@ -161,31 +304,6 @@ def get_image_size(model: "csmapi.RasterGM") -> tuple[int, int]:
     """Return (n_lines, n_samples) from a CSM model."""
     size = model.getImageSize()
     return int(size.line), int(size.samp)
-
-
-def get_target_radii(cube_path: str | Path) -> tuple[float, float]:
-    """Extract target body equatorial and polar radii from cube labels.
-
-    Returns
-    -------
-    tuple of (equatorial_radius_m, polar_radius_m)
-    """
-    from isistools.io.cubes import read_label
-
-    label = read_label(cube_path)
-    # After spiceinit, radii are in the NaifKeywords group
-    try:
-        naif = label["NaifKeywords"]
-        # BODY_RADII is [a, b, c] in km
-        radii = naif["BODY499_RADII"]  # Mars = 499; TODO: generalize
-        eq_r = float(radii[0]) * 1000.0
-        polar_r = float(radii[2]) * 1000.0
-    except (KeyError, IndexError):
-        # Fallback: Mars defaults
-        eq_r = 3396190.0
-        polar_r = 3376200.0
-
-    return eq_r, polar_r
 
 
 def ground_to_image_batch(

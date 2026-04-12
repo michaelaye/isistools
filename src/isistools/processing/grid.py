@@ -104,8 +104,16 @@ def grid_from_map_file(
     elif "PixelResolution" in mapping:
         res = float(mapping["PixelResolution"])  # meters/pixel
     elif "Scale" in mapping:
-        # Scale is pixels/degree; convert via equatorial radius
-        eq_r = float(mapping.get("EquatorialRadius", 3396190.0))
+        # Scale is pixels/degree; convert via equatorial radius. Require
+        # explicit EquatorialRadius in the MAP file — no silent Mars
+        # default (previous versions hardcoded 3396190 m).
+        if "EquatorialRadius" not in mapping:
+            msg = (
+                "MAP file uses Scale (pixels/degree) but lacks EquatorialRadius. "
+                "Cannot convert Scale to meters/pixel without knowing the body."
+            )
+            raise ValueError(msg)
+        eq_r = float(mapping["EquatorialRadius"])
         scale = float(mapping["Scale"])
         res = (np.pi * eq_r) / (180.0 * scale)
     else:

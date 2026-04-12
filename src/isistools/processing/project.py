@@ -9,7 +9,7 @@ import numpy as np
 from rich.console import Console
 
 from isistools.io.cubes import read_isis_cube_raw
-from isistools.processing.camera import get_image_size, get_target_radii, load_camera
+from isistools.processing.camera import TargetBody, get_image_size, load_camera
 from isistools.processing.dem import DemRadiusSampler, resolve_shape_model
 from isistools.processing.grid import OutputGrid, grid_from_map_file, grid_from_params
 from isistools.processing.resample import Interpolation, resample
@@ -131,25 +131,27 @@ def project(
     timings: dict[str, float] | None = {} if profile else None
     t_total0 = time.perf_counter() if profile else None
 
-    # Step 1: Load camera model. Default spice_source="isis" reads the
-    # cube's embedded SPICE blobs, which is the only correct choice
-    # after jigsaw update=true.
+    # Step 1: Load camera model + target body info. Default
+    # spice_source="isis" reads the cube's embedded SPICE blobs, which is
+    # the only correct choice after jigsaw update=true.
     console.print(
         f"[bold]Loading CSM camera model[/bold] from {input_cube.name} "
         f"(SPICE source: {spice_source})"
     )
     with _stage(timings, "load_camera"):
-        model = load_camera(input_cube, spice_source=spice_source)
+        model, body = load_camera(input_cube, spice_source=spice_source)
     n_lines, n_samples = get_image_size(model)
     console.print(f"  Input image: {n_samples} x {n_lines} (samples x lines)")
+    console.print(
+        f"  Target: {body.name} (NAIF {body.naif_id})  "
+        f"radii eq={body.radius_equatorial_m:.1f} m  polar={body.radius_polar_m:.1f} m"
+    )
 
-    # Step 2: Get target radii for sphere approximation
-    with _stage(timings, "target_radii"):
-        eq_r, polar_r = get_target_radii(input_cube)
-    # Mean radius used as fallback when no DEM is given or DEM has nodata
-    mean_radius = (2 * eq_r + polar_r) / 3.0
-
-    # Step 2b: Resolve shape model
+    # Step 2: Resolve shape model. The DEM sampler's per-pixel radius
+    # lookup falls back to the body's mean radius wherever the DEM
+    # reports nodata. When the user disables the DEM with shape_model=
+    # "ellipsoid", the same mean radius is the only surface radius used.
+    mean_radius = body.radius_mean_m
     with _stage(timings, "dem_open"):
         dem_sampler: DemRadiusSampler | None = None
         if shape_model == "auto":
@@ -174,6 +176,7 @@ def project(
     with _stage(timings, "build_grid"):
         grid = _build_grid(
             model=model,
+            body=body,
             input_cube=input_cube,
             map_file=map_file,
             projection=projection,
@@ -332,6 +335,7 @@ def _rasterize_footprint(input_cube: Path, grid: OutputGrid) -> np.ndarray:
 
 def _build_grid(
     model,
+    body: TargetBody,
     input_cube: Path,
     map_file: Path | None,
     projection: str | None,
@@ -339,7 +343,15 @@ def _build_grid(
     lat_range: tuple[float, float] | None,
     lon_range: tuple[float, float] | None,
 ) -> OutputGrid:
-    """Build output grid from MAP file or explicit parameters."""
+    """Build output grid from MAP file or explicit parameters.
+
+    When ``map_file`` is omitted and ``projection`` is also omitted, the
+    default projection is an equirectangular CRS built from the target
+    body's own radii (``body.radius_equatorial_m`` / ``.radius_polar_m``).
+    This is what makes csm2map body-agnostic: Mars gets Mars radii, the
+    Moon gets Moon radii, Europa gets Europa radii — all pulled from
+    ALE's ISD via :class:`TargetBody`, never from a hardcoded default.
+    """
     if map_file is not None:
         return grid_from_map_file(
             map_file,
@@ -349,9 +361,11 @@ def _build_grid(
         )
 
     if projection is None:
-        # Default to equirectangular with Mars radii
+        # Default to equirectangular with THIS body's radii (not Mars).
         projection = (
-            "+proj=eqc +lat_ts=0 +lon_0=0 +a=3396190 +b=3376200 +units=m +no_defs +type=crs"
+            f"+proj=eqc +lat_ts=0 +lon_0=0 "
+            f"+a={body.radius_equatorial_m} +b={body.radius_polar_m} "
+            f"+units=m +no_defs +type=crs"
         )
 
     if lat_range is None or lon_range is None:
