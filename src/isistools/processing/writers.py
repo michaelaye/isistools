@@ -146,6 +146,16 @@ def write_mapping_pvl(
 
     pvl_path = output_path.with_suffix(".pvl")
 
+    # Normalize longitudes to the declared domain [0, 360) so the PVL
+    # is self-consistent. _derive_ground_range may return values outside
+    # [-180, +180] for antimeridian-crossing strips (e.g. lon_min=179.5,
+    # lon_max=181.5); ISIS tools expect the values to match the domain.
+    lon_min_pvl = grid.lon_min % 360.0
+    lon_max_pvl = grid.lon_max % 360.0
+    center_lon_pvl = center_lon % 360.0
+    # If wraparound made max < min (e.g. 359° to 1°), that's correct
+    # for the 360 domain — ISIS interprets it as crossing 0°.
+
     lines = [
         "Group = Mapping",
         f"  ProjectionName     = {isis_proj_name}",
@@ -156,11 +166,11 @@ def write_mapping_pvl(
         "  LongitudeDirection = PositiveEast",
         "  LongitudeDomain    = 360",
         f"  CenterLatitude     = {center_lat}",
-        f"  CenterLongitude    = {center_lon}",
+        f"  CenterLongitude    = {center_lon_pvl}",
         f"  MinimumLatitude    = {grid.lat_min}",
         f"  MaximumLatitude    = {grid.lat_max}",
-        f"  MinimumLongitude   = {grid.lon_min}",
-        f"  MaximumLongitude   = {grid.lon_max}",
+        f"  MinimumLongitude   = {lon_min_pvl}",
+        f"  MaximumLongitude   = {lon_max_pvl}",
         f"  PixelResolution    = {grid.resolution} <meters/pixel>",
         f"  UpperLeftCornerX   = {grid.transform.c} <meters>",
         f"  UpperLeftCornerY   = {grid.transform.f} <meters>",
