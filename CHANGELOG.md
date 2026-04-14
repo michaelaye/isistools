@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-04-14
+
+### BREAKING
+
+- **csm2map is now a standalone CLI**: `csm2map project input.cub output.tif`
+  at the shell, not `isistools csm2map ...`. The old `isistools csm2map`
+  and `isistools csm2map-compare` subcommands are removed. The compare
+  command is now `csm2map compare`.
+- **`processing/` and `geo/` packages deleted**: all csm2map code moved
+  to `src/isistools/csm2map/`. Import paths changed:
+  `from isistools.processing.project import project` →
+  `from isistools.csm2map import csm2map`.
+- **`project()` renamed to `csm2map()`**: one name for CLI, Python API,
+  docs, paper.
+
+### Added
+
+- **`isistools.csm2map` subpackage**: self-contained, paper-reviewable,
+  extractable as a standalone product. Clean `__init__.py` public API:
+  `csm2map()`, `TargetBody`, `OutputGrid`, `CoordinateMap`,
+  `Interpolation`.
+- **`csm2map/compare.py`**: comparison logic extracted from CLI into a
+  library function that returns a dict of statistics. Usable from
+  notebooks and scripts, not just the CLI.
+- **`csm2map/cli.py`**: standalone Typer app with `project` and
+  `compare` subcommands, registered as the `csm2map` entry point in
+  `pyproject.toml`.
+- **Standalone `csm2map` entry point** in `pyproject.toml`:
+  `csm2map = "isistools.csm2map.cli:app"`.
+
+### Changed
+
+- **`project.py` renamed to `pipeline.py`**: the file name now describes
+  what it is (the pipeline orchestrator) rather than what it was
+  historically named. The public function is `csm2map()`.
+- **`geo/projections.py` absorbed into `csm2map/projections.py`**: it
+  had zero callers outside csm2map. No other isistools code is affected.
+- **Main `isistools` CLI slimmed**: csm2map commands removed (~224 lines).
+  Only viewer/footprint/cnet commands remain.
+- **CLAUDE.md architecture section rewritten** to document the new
+  csm2map subpackage layout.
+
+### Extraction path
+
+To ship csm2map as `pip install csm2map` in the future: copy
+`src/isistools/csm2map/` to a new repo, vendor `read_label()` +
+`read_isis_cube_raw()` from `isistools.io.cubes` (the only shared
+deps), add a standalone `pyproject.toml`. The shared surface is
+intentionally just 2 functions + 1 optional (`read_footprint`).
+
+### Tests
+
+- 64 passed, 1 skipped. Csm2map CLI tests updated for the standalone
+  app. Two csm2map entries removed from isistools CLI parametrized
+  test; 4 new standalone csm2map CLI tests added.
+
 ## [0.9.0] - 2026-04-12
 
 Zero-flags workflow, ISIS-compatible metadata sidecar, and longitude
@@ -666,7 +722,8 @@ for a future release.
 - Typer CLI with commands: `mosaic`, `tiepoints`, `footprints`,
   `cnet-info`.
 
-[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/michaelaye/isistools/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/michaelaye/isistools/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/michaelaye/isistools/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/michaelaye/isistools/compare/v0.7.1...v0.8.0
