@@ -16,6 +16,7 @@ import pytest
 from typer.testing import CliRunner
 
 from isistools.cli import app
+from isistools.csm2map.cli import app as csm2map_app
 
 runner = CliRunner()
 
@@ -125,11 +126,37 @@ def test_overlaps_png_path_does_not_hit_undefined_gpd():
         "spiceinit",
         "overlaps",
         "cnet-info",
-        "csm2map",
-        "csm2map-compare",
     ],
 )
 def test_every_command_has_help(command):
     """Every registered command must render `--help` without crashing."""
     result = runner.invoke(app, [command, "--help"])
     assert result.exit_code == 0, f"{command} --help failed: {result.output}"
+
+
+# ------------------------------------------------------------------
+# Standalone csm2map CLI tests
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["--help"],
+        ["project", "--help"],
+        ["compare", "--help"],
+    ],
+)
+def test_csm2map_cli_has_help(command):
+    """The standalone csm2map CLI must render help for all subcommands."""
+    result = runner.invoke(csm2map_app, command)
+    assert result.exit_code == 0, f"csm2map {' '.join(command)} failed: {result.output}"
+
+
+def test_csm2map_cli_no_args_is_help():
+    """Calling csm2map with no arguments should show help, not crash.
+    Typer's no_args_is_help=True exits with code 0 for the app-level
+    help display."""
+    result = runner.invoke(csm2map_app, [])
+    # Typer returns 0 or 2 depending on version for no-args-is-help
+    assert result.exit_code in (0, 2)
+    assert "CSM-based map projection" in result.output or "Usage" in result.output

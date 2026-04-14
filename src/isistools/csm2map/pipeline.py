@@ -8,22 +8,22 @@ from typing import Literal
 import numpy as np
 from rich.console import Console
 
-from isistools.io.cubes import read_isis_cube_raw
-from isistools.processing.camera import (
+from isistools.csm2map.camera import (
     TargetBody,
     compute_ground_sample_distance,
     get_image_size,
     load_camera,
 )
-from isistools.processing.dem import DemRadiusSampler, resolve_shape_model
-from isistools.processing.grid import OutputGrid, grid_from_map_file, grid_from_params
-from isistools.processing.resample import Interpolation, resample
-from isistools.processing.transform import (
+from isistools.csm2map.dem import DemRadiusSampler, resolve_shape_model
+from isistools.csm2map.grid import OutputGrid, grid_from_map_file, grid_from_params
+from isistools.csm2map.resample import Interpolation, resample
+from isistools.csm2map.transform import (
     compute_transform_coarse,
     compute_transform_dense,
     validate_coarse_vs_dense,
 )
-from isistools.processing.writers import write_geotiff, write_mapping_pvl
+from isistools.csm2map.writers import write_geotiff, write_mapping_pvl
+from isistools.io.cubes import read_isis_cube_raw
 
 console = Console()
 
@@ -41,7 +41,7 @@ def _stage(timings: dict | None, name: str):
         timings[name] = time.perf_counter() - t0
 
 
-def project(
+def csm2map(
     input_cube: str | Path,
     output_path: str | Path,
     *,

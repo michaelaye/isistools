@@ -28,8 +28,8 @@ from __future__ import annotations
 
 import pytest
 
-from isistools.geo.projections import mapping_to_crs
-from isistools.processing.camera import TargetBody
+from isistools.csm2map.camera import TargetBody
+from isistools.csm2map.projections import mapping_to_crs
 
 
 def _make_isd(naif_id: int, semimajor_km: float, semiminor_km: float) -> dict:

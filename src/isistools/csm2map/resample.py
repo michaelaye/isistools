@@ -14,7 +14,7 @@ from enum import Enum
 import numpy as np
 from scipy.ndimage import map_coordinates
 
-from isistools.processing.transform import CoordinateMap
+from isistools.csm2map.transform import CoordinateMap
 
 
 class Interpolation(str, Enum):

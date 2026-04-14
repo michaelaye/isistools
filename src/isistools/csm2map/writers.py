@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING
 import numpy as np
 import rasterio
 
-from isistools.processing.grid import OutputGrid
+from isistools.csm2map.grid import OutputGrid
 
 if TYPE_CHECKING:
-    from isistools.processing.camera import TargetBody
+    from isistools.csm2map.camera import TargetBody
 
 
 def write_geotiff(

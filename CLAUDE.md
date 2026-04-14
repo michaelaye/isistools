@@ -21,17 +21,15 @@ isistools tiepoints cubes.lis control.net
 isistools footprints cubes.lis
 isistools cnet-info control.net
 
-# csm2map - CSM-based replacement for ISIS cam2map
+# csm2map - standalone CLI, CSM-based replacement for ISIS cam2map
 # Runs from the py312 conda env (not the isis env): csmapi is built from
 # source for osx-arm64 and installed there alongside ale/usgscsm/isistools.
 # The isis env is used only for the ISIS reference tools (cam2map, camrange,
 # catlab) that our benchmarks/comparisons shell out to.
-#   /Users/maye/miniforge3/envs/py312/bin/isistools csm2map ...
-#   conda activate isis && cam2map from=... to=...
-isistools csm2map input.cub output.tif --map equi.map
-isistools csm2map input.cub output.tif -r 6.0
-isistools csm2map input.cub output.tif --map equi.map --dense --validate
-isistools csm2map-compare isis_output.cub csm_output.tif
+csm2map input.cub output.tif                    # auto everything
+csm2map input.cub output.tif --map equi.map     # use an ISIS MAP file
+csm2map input.cub output.tif -r 6.0             # explicit resolution
+csm2map compare isis_output.cub csm_output.tif  # validate vs ISIS
 
 # Quarto docs (front matter in README.md, no _quarto.yml needed)
 quarto render README.md
@@ -58,17 +56,20 @@ The codebase follows a three-layer pattern: **I/O → Plotting → Apps**
 - `tiepoint_review.py` — TiepointReview class: side-by-side image pairs with shared tie points. Qnet replacement.
 - `components.py` — Reusable Panel widgets (cube list selector, cnet selector, info panels).
 
-### Processing layer (`processing/`)
-CSM-based replacement for ISIS `cam2map`, exposed as the `csm2map` CLI command. Pipeline: camera model → output grid → coordinate transform → resample → GeoTIFF.
-- `camera.py` — Loads CSM RasterGM sensor models from spiceinit'd cubes via ale/usgscsm (no knoten dependency). `load_camera()` returns `(csmapi.RasterGM, TargetBody)` — the `TargetBody` frozen dataclass carries the target body's ellipsoid (radii, NAIF ID, mean radius) parsed from ALE's ISD. Provides `ground_to_image_batch()` for coordinate mapping (the performance bottleneck — Python loop over CSM calls).
-- `grid.py` — `OutputGrid` dataclass defining the output raster (CRS, affine transform, dimensions). Built from ISIS MAP files or explicit parameters.
-- `transform.py` — `CoordinateMap` mapping output pixels to input pixels. Two strategies: dense (every pixel, slow) and coarse-grid + bilinear interpolation (production path, step=16 default).
-- `resample.py` — Applies coordinate map via `scipy.ndimage.map_coordinates`. Supports nearest/bilinear/bicubic.
-- `writers.py` — GeoTIFF output via rasterio.
-- `project.py` — Orchestrates the full pipeline. Also contains `_derive_ground_range()` for auto-computing bounds from camera model.
+### csm2map subpackage (`csm2map/`)
+Self-contained CSM-based replacement for ISIS `cam2map`, with its own standalone CLI (`csm2map` at the shell) and Python API (`from isistools.csm2map import csm2map`). Could be extracted as a standalone package in the future — shared deps are just `io/cubes.py` (`read_label`, `read_isis_cube_raw`) and `io/footprints.py` (`read_footprint`).
 
-### Geo layer (`geo/`)
-- `projections.py` — `mapping_to_crs()` converts ISIS Mapping group to `pyproj.CRS`. `mapping_to_proj4()` is a thin wrapper. `ISIS_TO_PROJ4` maps 12 ISIS projection names to proj4 IDs.
+Pipeline: camera model → output grid → coordinate transform → resample → GeoTIFF + PVL sidecar.
+
+- `camera.py` — `load_camera()` returns `(csmapi.RasterGM, TargetBody)`. `TargetBody` frozen dataclass carries body ellipsoid + NAIF ID from ALE ISD. `compute_ground_sample_distance()` for auto-resolution. `ground_to_image_batch()` for coordinate mapping.
+- `grid.py` — `OutputGrid` dataclass defining the output raster (CRS, affine, dimensions). `grid_from_map_file()` handles all ISIS conventions (planetographic, positive-west, 180/360 domain). `grid_from_params()` with ISIS-compatible snap rule.
+- `transform.py` — `CoordinateMap` mapping output → input pixels. Coarse-grid + vectorized bilinear interpolation (production, step=32) or dense (validation).
+- `resample.py` — `scipy.ndimage.map_coordinates` with threaded stripe processing. Supports nearest/bilinear/bicubic.
+- `writers.py` — GeoTIFF (ZSTD, tiled) + ISIS-compatible Mapping PVL sidecar.
+- `pipeline.py` — `csm2map()` function orchestrating the full pipeline. Auto-resolution from camera GSD, auto-bounds via circular-statistics footprint derivation, auto-centered projection.
+- `projections.py` — `mapping_to_crs()` converts ISIS Mapping group to `pyproj.CRS`. `planetographic_to_planetocentric()` and longitude normalization helpers.
+- `compare.py` — Pixel-level comparison of csm2map output vs ISIS cam2map reference.
+- `cli.py` — Standalone Typer app with `project` and `compare` commands.
 
 ### CLI (`cli.py`)
 Typer-based. Each command constructs an app object and calls `.serve()`. Entry point: `isistools = "isistools.cli:app"`. The `csm2map` command guards its CSM imports with try/except for a clear error if `[csm]` extras are not installed.

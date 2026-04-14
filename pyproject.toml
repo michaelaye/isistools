@@ -70,6 +70,7 @@ dev = [
 
 [project.scripts]
 isistools = "isistools.cli:app"
+csm2map = "isistools.csm2map.cli:app"
 
 [tool.hatch.version]
 path = "src/isistools/__init__.py"

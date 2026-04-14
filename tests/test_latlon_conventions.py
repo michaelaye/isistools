@@ -13,7 +13,7 @@ positive-east / 360° convention.
 These tests lock in that fix at two levels:
 
 1. **Unit-level**: exercise the pure-geometry helpers in
-   ``isistools.geo.projections`` against known Mars values and against
+   ``isistools.csm2map.projections`` against known Mars values and against
    the sphere identity.
 
 2. **Integration-level**: build two synthetic MAP files that describe
@@ -31,14 +31,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from isistools.geo.projections import (
+from isistools.csm2map.grid import grid_from_map_file
+from isistools.csm2map.projections import (
     normalize_latitude_from_mapping,
     normalize_longitude,
     normalize_longitude_from_mapping,
     planetocentric_to_planetographic,
     planetographic_to_planetocentric,
 )
-from isistools.processing.grid import grid_from_map_file
 
 # Mars axes (to match F05 and what the Mars MAP files carry)
 MARS_EQ = 3396190.0

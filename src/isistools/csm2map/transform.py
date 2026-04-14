@@ -17,13 +17,13 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from isistools.processing.camera import ground_to_image_batch
-from isistools.processing.grid import OutputGrid
+from isistools.csm2map.camera import ground_to_image_batch
+from isistools.csm2map.grid import OutputGrid
 
 if TYPE_CHECKING:
     import csmapi
 
-    from isistools.processing.dem import DemRadiusSampler
+    from isistools.csm2map.dem import DemRadiusSampler
 
 
 def _bilinear_upsample_pair(

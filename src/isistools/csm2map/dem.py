@@ -22,7 +22,7 @@ import rasterio
 from pyproj import CRS, Transformer
 from scipy.ndimage import map_coordinates
 
-from isistools.geo.projections import _to_meters, mapping_to_crs
+from isistools.csm2map.projections import _to_meters, mapping_to_crs
 from isistools.io.cubes import read_label
 
 # pyproj raises when transforming between Earth (EPSG:4326) and a Mars CRS;

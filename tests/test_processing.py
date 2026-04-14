@@ -11,7 +11,7 @@ import pytest
 
 def test_grid_from_params():
     """Test basic grid construction from explicit parameters."""
-    from isistools.processing.grid import grid_from_params
+    from isistools.csm2map.grid import grid_from_params
 
     grid = grid_from_params(
         crs="+proj=eqc +lat_ts=0 +lon_0=0 +a=3396190 +b=3376200 +units=m +no_defs +type=crs",
@@ -30,8 +30,8 @@ def test_grid_from_params():
 
 def test_resample_identity():
     """Test resampling with an identity coordinate map."""
-    from isistools.processing.resample import Interpolation, resample
-    from isistools.processing.transform import CoordinateMap
+    from isistools.csm2map.resample import Interpolation, resample
+    from isistools.csm2map.transform import CoordinateMap
 
     # Create a simple 10x10 test image
     input_data = np.arange(100, dtype=np.float32).reshape(10, 10)
@@ -50,8 +50,8 @@ def test_resample_identity():
 
 def test_resample_shift():
     """Test resampling with a half-pixel shift."""
-    from isistools.processing.resample import Interpolation, resample
-    from isistools.processing.transform import CoordinateMap
+    from isistools.csm2map.resample import Interpolation, resample
+    from isistools.csm2map.transform import CoordinateMap
 
     input_data = np.ones((10, 10), dtype=np.float32) * 42.0
 
@@ -80,7 +80,7 @@ def test_isis_special_pixel_masking():
 
 def test_mapping_to_crs():
     """Test that mapping_to_crs returns a valid pyproj CRS."""
-    from isistools.geo.projections import mapping_to_crs
+    from isistools.csm2map.projections import mapping_to_crs
 
     mapping = {
         "ProjectionName": "Equirectangular",

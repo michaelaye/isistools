@@ -15,7 +15,7 @@ import numpy as np
 import pvl
 from pyproj import CRS, Transformer
 
-from isistools.geo.projections import (
+from isistools.csm2map.projections import (
     _to_meters,
     mapping_to_crs,
     normalize_latitude_from_mapping,
