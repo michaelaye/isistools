@@ -91,8 +91,8 @@ def test_mapping_to_crs():
     }
     crs = mapping_to_crs(mapping)
     # Should be a valid CRS with equirectangular projection
-    proj4 = crs.to_proj4()
-    assert "+proj=eqc" in proj4
+    assert crs.coordinate_operation is not None
+    assert "Cylindrical" in crs.coordinate_operation.method_name
 
 
 @pytest.mark.slow

@@ -79,8 +79,23 @@ def write_geotiff(
     return output_path
 
 
-# Reverse map from proj4 identifiers back to ISIS projection names.
-# Only needs to cover what ISIS_TO_PROJ4 in geo/projections.py maps.
+# Map from EPSG/WKT2 method names to ISIS projection names.
+_METHOD_TO_ISIS = {
+    "Equidistant Cylindrical": "Equirectangular",
+    "Equidistant Cylindrical (Spherical)": "Equirectangular",
+    "Sinusoidal": "Sinusoidal",
+    "Mercator (variant A)": "Mercator",
+    "Mercator (variant B)": "Mercator",
+    "Transverse Mercator": "TransverseMercator",
+    "Polar Stereographic (variant A)": "PolarStereographic",
+    "Polar Stereographic (variant B)": "PolarStereographic",
+    "Orthographic": "Orthographic",
+    "Lambert Conic Conformal (2SP)": "LambertConformal",
+    "Lambert Azimuthal Equal Area": "LambertAzimuthalEqualArea",
+    "Lambert Azimuthal Equal Area (Spherical)": "LambertAzimuthalEqualArea",
+}
+
+# Legacy: proj4 identifiers (fallback)
 _PROJ4_TO_ISIS = {
     "eqc": "Equirectangular",
     "sinu": "Sinusoidal",
@@ -125,24 +140,26 @@ def write_mapping_pvl(
     -------
     Path to the written ``.pvl`` file.
     """
-    # Extract the proj4 projection ID from the CRS so we can reverse-map
-    # to the ISIS projection name.
-    proj4 = grid.crs.to_proj4()
-    proj_id = None
+    # Extract projection name and parameters from the CRS using pyproj's
+    # coordinate_operation API (lossless, unlike to_proj4).
     center_lon = 0.0
     center_lat = 0.0
-    for part in proj4.split():
-        if part.startswith("+proj="):
-            proj_id = part.split("=", 1)[1]
-        elif part.startswith("+lon_0="):
-            center_lon = float(part.split("=", 1)[1])
-        elif part.startswith("+lat_ts="):
-            center_lat = float(part.split("=", 1)[1])
-        elif part.startswith("+lat_0="):
-            # Some projections use lat_0 instead of lat_ts
-            center_lat = float(part.split("=", 1)[1])
-
-    isis_proj_name = _PROJ4_TO_ISIS.get(proj_id, proj_id or "Unknown")
+    op = grid.crs.coordinate_operation
+    if op is not None:
+        method_name = op.method_name
+        isis_proj_name = _METHOD_TO_ISIS.get(method_name, method_name)
+        # Extract center lon/lat from operation parameters
+        for p in op.params:
+            name_lower = p.name.lower()
+            if "longitude" in name_lower and "origin" in name_lower:
+                center_lon = p.value
+            elif "standard parallel" in name_lower:
+                center_lat = p.value
+            elif "latitude" in name_lower and "origin" in name_lower:
+                if center_lat == 0.0:  # don't override lat_ts
+                    center_lat = p.value
+    else:
+        isis_proj_name = "Unknown"
 
     pvl_path = output_path.with_suffix(".pvl")
 

@@ -185,8 +185,9 @@ class TestMappingToCrsNoMarsDefault:
         }
         crs = mapping_to_crs(mapping)
         assert crs is not None
-        # Proj4 string should carry the Mars radii, not be defaulted
-        assert "3396190" in crs.to_proj4()
+        # CRS ellipsoid should carry Mars radii
+        ellipsoid = crs.ellipsoid
+        assert abs(ellipsoid.semi_major_metre - 3396190.0) < 1.0
 
     def test_europa_mapping_works(self):
         """A Europa MAP file must produce a Europa CRS, not a Mars CRS."""
@@ -199,10 +200,10 @@ class TestMappingToCrsNoMarsDefault:
             "CenterLongitude": 0.0,
         }
         crs = mapping_to_crs(mapping)
-        proj4 = crs.to_proj4()
-        # Must carry Europa's radii. Must NOT carry Mars's radii.
-        assert "1562600" in proj4
-        assert "3396190" not in proj4
+        # Must carry Europa's radii, not Mars
+        ellipsoid = crs.ellipsoid
+        assert abs(ellipsoid.semi_major_metre - 1562600.0) < 1.0
+        assert abs(ellipsoid.semi_major_metre - 3396190.0) > 1000
 
     def test_missing_equatorial_radius_raises(self):
         """Regression test for the body-agnostic refactor: a Mapping group

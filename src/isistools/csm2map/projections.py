@@ -107,8 +107,10 @@ def mapping_to_crs(mapping: dict) -> CRS:
     return CRS.from_proj4(" ".join(parts))
 
 
-def mapping_to_proj4(mapping: dict) -> str:
-    """Convert an ISIS Mapping group dict to a proj4 string.
+def mapping_to_wkt2(mapping: dict) -> str:
+    """Convert an ISIS Mapping group dict to a WKT2 CRS string.
+
+    This is the lossless alternative to proj4 strings.
 
     Parameters
     ----------
@@ -119,9 +121,9 @@ def mapping_to_proj4(mapping: dict) -> str:
     Returns
     -------
     str
-        Proj4 projection string.
+        WKT2 CRS string.
     """
-    return mapping_to_crs(mapping).to_proj4()
+    return mapping_to_crs(mapping).to_wkt()
 
 
 def _to_meters(value) -> float:
