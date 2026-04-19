@@ -31,6 +31,10 @@ csm2map input.cub output.tif --map equi.map     # use an ISIS MAP file
 csm2map input.cub output.tif -r 6.0             # explicit resolution
 csm2map compare isis_output.cub csm_output.tif  # validate vs ISIS
 
+# ctxpipe - standalone CLI, Python replacement for ISIS mroctx2isis+ctxcal+ctxevenodd
+ctxpipe B04_011267_0983_XN_81S063W.IMG calibrated.tif  # full pipeline
+ctxpipe B04_011267_0983_XN_81S063W.IMG out.tif --iof --sun-distance 2.28e8  # I/F units
+
 # Quarto docs (front matter in README.md, no _quarto.yml needed)
 quarto render README.md
 quarto preview README.md
@@ -70,6 +74,23 @@ Pipeline: camera model → output grid → coordinate transform → resample →
 - `projections.py` — `mapping_to_crs()` converts ISIS Mapping group to `pyproj.CRS`. `planetographic_to_planetocentric()` and longitude normalization helpers.
 - `compare.py` — Pixel-level comparison of csm2map output vs ISIS cam2map reference.
 - `cli.py` — Standalone Typer app with `project` and `compare` commands.
+
+### ctxpipe subpackage (`ctxpipe/`)
+Pure-Python replacement for the ISIS CTX calibration chain (mroctx2isis + ctxcal + ctxevenodd). Reads PDS3 EDRs directly, no ISIS installation needed. Validated pixel-exact against ISIS output (max relative error < 1e-6).
+
+- `ingest.py` — `ingest_ctx_edr()` reads PDS3 EDR, applies SQROOT decompression (8-bit → 12-bit LUT), extracts dark pixels. Returns `(image, CTXMetadata)`.
+- `calibrate.py` — `calibrate()` applies dark current subtraction (per-channel A/B for summing=1), flat-field correction from `$ISISDATA/mro/calibration/ctxFlat_NNNN.cub`, optional I/F conversion. Constants: w0=3660.5, perihelion=2.07e8 km.
+- `evenodd.py` — `correct_evenodd()` fixes alternating-column striping. Only for summing=1. Correction = half the even-odd mean difference, added to odd / subtracted from even.
+- `pipeline.py` — `ctxpipe()` orchestrates ingest → calibrate → evenodd. Optional GeoTIFF output.
+- `cli.py` — Standalone Typer app with `calibrate` command. Entry point: `ctxpipe`.
+
+### hirisepipe subpackage (`hirisepipe/`)
+Pure-Python replacement for the ISIS HiRISE RED calibration chain (hical + histitch + cubenorm). Reads ISIS cubes (from hi2isis), no ISIS needed for calibration. Validated against ISIS hical to 0.08% mean relative error.
+
+- `hical.py` — `hical()` applies the full 10-module calibration chain: ZeroBufferSmooth, ZeroBufferFit, ZeroReverse, ZeroDark, GainLineDrift, GainNonLinearity, GainChannelNormalize, GainFlatField, GainTemperature, GainUnitConversion. Two-pass algorithm: first pass subtracts drift/dark/reverse, second pass applies gain/flat/temp using line median for non-linearity. Reads calibration matrices from `$ISISDATA/mro/calibration/matrices/`.
+- `stitch.py` — `stitch_channels()` stitches CCD channels 0 and 1 with optional balance correction (seam-edge average ratio).
+- `cubenorm.py` — `cubenorm()` normalizes column-to-column variations by dividing each column by its median.
+- `pipeline.py` — `process_ccd()` orchestrates hical → histitch → cubenorm for a single CCD.
 
 ### CLI (`cli.py`)
 Typer-based. Each command constructs an app object and calls `.serve()`. Entry point: `isistools = "isistools.cli:app"`. The `csm2map` command guards its CSM imports with try/except for a clear error if `[csm]` extras are not installed.

@@ -1,0 +1,169 @@
+---
+title: "CTX Calibration Pipeline"
+---
+
+# ctxpipe — Python CTX Calibration Pipeline
+
+`ctxpipe` is a pure-Python replacement for the ISIS3 CTX calibration chain:
+
+```
+mroctx2isis → ctxcal → ctxevenodd
+```
+
+It reads PDS3 CTX EDR files directly, applies SQROOT decompression, radiometric
+calibration (dark current subtraction + flat-field correction), and even/odd
+column correction.  The output matches ISIS to float32 precision (max relative
+error < 1e-6).
+
+## Quick Start
+
+### CLI
+
+```bash
+ctxpipe B04_011267_0983_XN_81S063W.IMG calibrated.tif
+```
+
+### Python API
+
+```python
+from isistools.ctxpipe import ctxpipe
+
+image, meta = ctxpipe("input.IMG")
+```
+
+### Step-by-Step Python
+
+```python
+from isistools.ctxpipe.ingest import ingest_ctx_edr
+from isistools.ctxpipe.calibrate import calibrate
+from isistools.ctxpipe.evenodd import correct_evenodd
+
+# Step 1: Ingest PDS3 EDR (replaces mroctx2isis)
+raw, meta = ingest_ctx_edr("B04_011267_0983_XN_81S063W.IMG")
+
+# Step 2: Radiometric calibration (replaces ctxcal)
+cal = calibrate(raw, meta, iof=False)
+
+# Step 3: Even/odd column correction (replaces ctxevenodd)
+clean = correct_evenodd(cal, spatial_summing=meta.spatial_summing)
+```
+
+## Pipeline Stages
+
+### 1. Ingestion (`ingest_ctx_edr`)
+
+Replaces ISIS `mroctx2isis`.
+
+- Parses PDS3 label with `pvl`
+- Reads raw 8-bit image data
+- Applies SQROOT decompression (8-bit → 12-bit via lookup table)
+- Extracts dark/buffer pixels from prefix columns
+- Returns float32 image + `CTXMetadata` dataclass
+
+The SQROOT lookup table is built from `$ISISDATA/mro/calibration/ctxsqroot_001.lut`.
+Dark pixel column ranges are computed from the spatial summing mode and edit mode,
+following the ISIS logic exactly.
+
+### 2. Calibration (`calibrate`)
+
+Replaces ISIS `ctxcal`.
+
+For each line, the calibration equation is:
+
+$$
+\text{cal}(s, l) = \frac{\text{DN}(s, l) - \text{dark}(l)}{\text{exposure} \times \text{flat}(s)}
+$$
+
+Where:
+
+- **DN** is the SQROOT-decompressed pixel value
+- **dark** is the per-line dark current, computed separately for channels A and B
+  (alternating columns) from the prefix dark pixels
+- **exposure** is the line exposure duration in milliseconds
+- **flat** is the flat-field correction from `$ISISDATA/mro/calibration/ctxFlat_NNNN.cub`
+
+For summing mode 1, channels A (even columns) and B (odd columns) have independent
+dark currents.  For summing mode 2, a single combined dark current is used.
+
+#### I/F Conversion
+
+With `iof=True`, an additional conversion is applied:
+
+$$
+\text{I/F}(s, l) = \frac{\text{cal}(s, l)}{w_1}
+$$
+
+Where $w_1 = w_0 \times \frac{d_{\text{perihelion}}^2}{d_{\text{sun}}^2}$,
+$w_0 = 3660.5$ DN/ms, and $d_{\text{perihelion}} = 2.07 \times 10^8$ km.
+
+This requires the Sun-to-target distance (`sun_distance_km`), which can be
+computed from SPICE kernels.
+
+### 3. Even/Odd Correction (`correct_evenodd`)
+
+Replaces ISIS `ctxevenodd`.
+
+Corrects systematic striping from alternating column readout:
+
+1. Compute mean of all valid odd-column pixels ($\bar{x}_{\text{odd}}$)
+   and even-column pixels ($\bar{x}_{\text{even}}$)
+2. Correction offset: $\delta = (\bar{x}_{\text{even}} - \bar{x}_{\text{odd}}) / 2$
+3. Add $\delta$ to odd columns, subtract $\delta$ from even columns
+
+Only applied for spatial summing = 1 (summing > 1 has no even/odd artifact).
+
+## Validation Against ISIS
+
+The Python pipeline has been validated pixel-by-pixel against ISIS output on
+the test image B04_011267_0983_XN_81S063W:
+
+| Stage | Comparison | Result |
+|-------|-----------|--------|
+| Ingestion | vs. `mroctx2isis` | **Pixel-exact** (56,320,000/56,320,000 match) |
+| Calibration | vs. `ctxcal IOF=false` | Max relative error: 1.4e-7 |
+| Even/odd | vs. `ctxevenodd` | Max relative error: 2.4e-7 |
+
+The calibration and even/odd differences are at float32 machine epsilon — the
+algorithms are identical, with only floating-point rounding order differences.
+
+## Requirements
+
+- **numpy** — array operations
+- **pvl** — PDS3 label parsing
+- **rioxarray** / **xarray** — reading flat-field calibration cube
+- **ISISDATA** — CTX calibration files (`ctxFlat_NNNN.cub`, `ctxsqroot_001.lut`)
+
+The calibration data files from ISISDATA are required.  Set the `calibration_dir`
+parameter or ensure `$ISISDATA/mro/calibration/` is accessible.
+
+No ISIS installation is needed for the pipeline itself.
+
+## Limitations
+
+1. **SQROOT only.** Currently only supports SQROOT-encoded EDRs (the standard
+   CTX encoding).  TABLE encoding is not implemented.
+
+2. **I/F auto-computes Sun distance.** If `spiceypy` is installed and the
+   spiceinit'd cube is available alongside the EDR, Sun distance is computed
+   automatically via `isistools.spice_utils.sun_distance_from_cube()`.
+
+3. **Summing mode 2 not yet validated.** The code handles summing mode 2 following
+   the ISIS algorithm, but no summing=2 reference data has been tested.
+
+## Full Pipeline: EDR → Map-Projected GeoTIFF
+
+The `ctx_edr_to_map` function chains ctxpipe calibration with csm2map projection:
+
+```python
+from isistools.ctxpipe.project import ctx_edr_to_map
+
+ctx_edr_to_map(
+    edr_path="B04_011267_0983_XN_81S063W.IMG",
+    cube_path="B04_011267_0983_XN_81S063W.cub",  # spiceinit'd, for camera model
+    output_path="projected.tif",
+)
+```
+
+The cube is only used for camera geometry (SPICE data from spiceinit).
+All pixel calibration comes from ctxpipe's Python implementation.
+The output is a standard GeoTIFF with an ISIS-compatible PVL sidecar.

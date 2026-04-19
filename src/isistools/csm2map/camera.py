@@ -300,6 +300,92 @@ def load_camera(
     raise RuntimeError(msg)
 
 
+def load_camera_from_label(
+    label_path: str | Path,
+    refresh_isd: bool = True,
+    use_web: bool = True,
+) -> tuple["csmapi.RasterGM", "TargetBody"]:
+    """Load a CSM camera model from any PDS label (EDR or cube).
+
+    Uses ALE's NaifSpice driver to generate an ISD directly from the
+    label.  By default uses SpiceQL's web service for kernel data, so
+    no local SPICE kernels are needed.  No spiceinit required — this
+    works with raw PDS EDR files.
+
+    Parameters
+    ----------
+    label_path : path-like
+        Path to a PDS3 label file (.IMG, .lbl) or ISIS cube (.cub).
+        ALE will auto-detect the instrument and select the appropriate
+        driver.
+    refresh_isd : bool
+        If True (default), regenerate the ISD even if a cached JSON exists.
+    use_web : bool
+        If True (default), use SpiceQL web service for SPICE data.
+        Set to False to use locally installed NAIF kernels.
+
+    Returns
+    -------
+    model : csmapi.RasterGM
+        CSM sensor model.
+    body : TargetBody
+        Target body ellipsoid + NAIF ID.
+
+    Raises
+    ------
+    RuntimeError
+        If ALE cannot generate an ISD or no CSM plugin can build a model.
+    """
+    import ale
+    import csmapi
+
+    _ensure_csm_plugin_loaded()
+
+    label_path = Path(label_path)
+    label_str = str(label_path)
+
+    isd_path = label_path.with_suffix(".json")
+    if refresh_isd or not isd_path.exists():
+        props = {"web": True} if use_web else {}
+        isd_str = ale.loads(label_str, props=props, only_naif_spice=True)
+        isd_path.write_text(isd_str)
+    else:
+        isd_str = isd_path.read_text()
+
+    isd_dict = json.loads(isd_str)
+
+    # Extract target name from the label
+    target_name: str | None = None
+    try:
+        import pvl
+
+        label = pvl.load(label_str)
+        # Try ISIS cube format first, then PDS3
+        if "IsisCube" in label:
+            target_name = str(label["IsisCube"]["Instrument"].get("TargetName", ""))
+        else:
+            target_name = str(label.get("TARGET_NAME", ""))
+        target_name = target_name.strip() or None
+    except Exception:
+        target_name = None
+
+    body = TargetBody.from_isd(isd_dict, target_name=target_name)
+
+    isd = csmapi.Isd(label_str)
+
+    for plugin in csmapi.Plugin.getList():
+        for model_index in range(plugin.getNumModels()):
+            model_name = plugin.getModelName(model_index)
+            warnings = csmapi.WarningList()
+            if plugin.canModelBeConstructedFromISD(isd, model_name, warnings):
+                model = plugin.constructModelFromISD(isd, model_name)
+                if isinstance(model, csmapi.RasterGM):
+                    return model, body
+
+    msg = f"No CSM plugin could construct a model from {label_path}"
+    raise RuntimeError(msg)
+
+
 def get_image_size(model: "csmapi.RasterGM") -> tuple[int, int]:
     """Return (n_lines, n_samples) from a CSM model."""
     size = model.getImageSize()

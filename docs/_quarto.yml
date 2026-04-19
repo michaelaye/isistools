@@ -19,6 +19,8 @@ book:
         - tiepoints.qmd
         - cnet-info.qmd
         - csm2map.qmd
+        - ctxpipe.qmd
+        - hirisepipe.qmd
     - part: "Reference"
       chapters:
         - python-api.qmd
