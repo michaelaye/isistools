@@ -1,0 +1,561 @@
+---
+title: "From ISIS3 to Python: A Migration Feasibility Study"
+subtitle: "Scope, Strategy, and Roadmap for Replacing USGS ISIS3 with a Python-Native Planetary Image Processing Stack"
+author: "K.-Michael Aye"
+date: 2026-04-19
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    theme: sandstone
+  pdf:
+    toc: true
+    number-sections: true
+    documentclass: article
+    papersize: a4
+    geometry:
+      - margin=2.5cm
+bibliography: references.bib
+---
+
+# Motivation {#sec-motivation}
+
+## The Rosetta 2 Deadline
+
+USGS ISIS3 is a C++ framework that currently runs on Apple Silicon (M1–M4) only through
+Rosetta 2 x86 emulation.
+Apple is phasing out Rosetta 2 on the following timeline:
+
+| Milestone | Date | Impact |
+|---|---|---|
+| macOS 26.4 | Feb 2026 | Rosetta deprecation warnings begin |
+| macOS 27 | Fall 2026 | Last macOS with full Rosetta 2 support |
+| macOS 28 | Fall 2027 | Rosetta 2 effectively removed |
+
+After macOS 28, ISIS3 will not run on any Mac unless the USGS resolves its ARM-incompatible
+dependencies.
+This creates a hard deadline: by Fall 2027, macOS users need an alternative to ISIS3
+for their planetary image processing workflows.
+
+## Why Not Just Fix ISIS3 for ARM?
+
+Native ARM compilation of ISIS3 is blocked by several dependencies that lack `osx-arm64`
+conda packages (GitHub Issue
+[#5188](https://github.com/DOI-USGS/ISIS3/issues/5188), closed as "inactive"):
+
+- **Embree** — Intel's ray-tracing library, used for ray–body intersection with DTMs.
+  Intel has not prioritized ARM support.
+- **Bullet** — Physics engine used for collision detection.
+  ARM builds are experimental.
+- **Kakadu** — Proprietary JPEG 2000 library. No ARM builds from the vendor.
+- **Version-pinned packages** — Qt (migrated from 5.15 to 6, which helps), Boost 1.72,
+  and several USGS-maintained packages (cspice, SpiceQL).
+
+An earlier issue requesting ARM support ([#4753](https://github.com/DOI-USGS/ISIS3/issues/4753),
+Jan 2022) was also closed without resolution.
+
+The Qt 5 → 6 migration is a positive step (Qt 6 has excellent ARM support), but Embree
+and Kakadu remain fundamental blockers.
+Removing these dependencies would require substantial refactoring of ISIS3's ray–body
+intersection and JP2K support — work the USGS has not prioritized.
+
+## The Case for Python
+
+A Python-native stack avoids the ARM problem entirely: numpy, scipy, rasterio, pyproj,
+and the CSM Python bindings (csmapi) all run natively on Apple Silicon today.
+Beyond ARM compatibility, Python offers:
+
+- **Lower barrier to entry** for planetary scientists who are increasingly Python-first
+- **Smaller dependency footprint** — no Qt, no Embree, no Bullet
+- **Composability** with the broader scientific Python ecosystem (xarray, dask, scikit-image)
+- **Easier distribution** via pip/conda without building C++ toolchains
+
+
+# ISIS3 Architecture Overview {#sec-architecture}
+
+## Scale of the Codebase
+
+ISIS3 contains approximately **367 CLI applications** organized as:
+
+| Category | Count | Description |
+|---|---|---|
+| Base (mission-independent) | ~199 | Core image processing, geometry, I/O, mosaicking |
+| Control network tools | ~31 | Tie points, bundle adjustment, registration |
+| Mission-specific | ~130 | Ingestion, calibration, instrument corrections |
+| GUI applications | ~7 | qmos, qnet, qview, qtie, cneteditor, ipce |
+
+## The IsisMain / Qt Pattern
+
+Every ISIS3 application — even pure CLI tools — links against Qt because the parameter
+system (`IsisAml`, ISIS Application Markup Language) uses Qt's XML parser internally.
+The flow is:
+
+1. The programmer writes an `IsisMain()` function (not `main()`)
+2. The framework provides the real `main()`, initializing Qt and error handling
+3. Parameters are defined in an XML file per app, parsed by `IsisAml`
+4. `UserInterface` (inheriting `IsisAml`) handles both CLI and GUI modes
+
+This means **every ISIS binary requires Qt**, even for trivial operations like
+`stats input.cub`. This architectural choice compounds the ARM problem.
+
+## Core C++ Libraries
+
+### Camera Model Hierarchy
+
+```
+Spice
+  └── Sensor
+        └── Camera
+              ├── FramingCamera       (e.g., MDIS-NAC, Galileo SSI)
+              ├── LineScanCamera      (e.g., CTX, HiRISE, HRSC)
+              ├── PushFrameCamera     (e.g., LROC WAC, Chandrayaan M3)
+              ├── RadarCamera         (SAR instruments)
+              ├── RollingShutterCamera
+              └── CSMCamera           (CSM-compliant wrapper)
+```
+
+Mission-specific cameras (HiriseCamera, CtxCamera, etc.) inherit from the appropriate
+intermediate class.
+`CameraFactory` instantiates the correct subclass by reading plugin files.
+
+### Other Key Libraries
+
+- **Cube** — File I/O with PVL labels and binary blobs (Table, Polygon, History, Stretch)
+- **Projection** hierarchy — `TProjection` (body-surface) and `RingPlaneProjection`
+  with ~20 map projection implementations
+- **ControlNet / ControlPoint / ControlMeasure** — Three-tier control network model,
+  serialized as Protocol Buffers (version 5)
+- **Spice** — NAIF kernel management, spacecraft state queries
+- **Statistics / Histogram / MultivariateStatistics** — Statistical foundations
+
+### Major C++ Dependencies
+
+Beyond Qt, ISIS3 depends on: armadillo, bullet, cspice, eigen, embree, geos, GDAL,
+GSL, HDF5, OpenCV, protobuf, nanoflann, PCL, qwt, SuiteSparse, SuperLU, Xerces-C,
+usgscsm, ale, and SpiceQL.
+This is a heavy dependency tree — which is precisely why ARM migration is so difficult.
+
+
+# Complexity Tier Classification {#sec-tiers}
+
+To assess migration feasibility, we classify all ~337 non-GUI ISIS3 applications into
+four tiers based on the effort required for a Python port.
+
+## Tier 1 — Trivial (~55 apps) {#sec-tier1}
+
+Pure array operations achievable with numpy/scipy one-liners.
+A Python port is essentially a numpy expression wrapped in a CLI.
+
+**Arithmetic / pixel math:**
+`algebra`, `ratio`, `fx`, `cubefunc`, `poly`, `specadd`
+
+**Statistics:**
+`stats`, `hist`, `percent`, `mvstats`, `cubeavg`
+
+**Stretch / contrast:**
+`stretch`, `gaussstretch`, `sigmastretch`, `histeq`, `histmatch`, `decorstretch`
+
+**Geometry (array ops):**
+`flip`, `mirror`, `rotate`, `crop`, `cropspecial`, `uncrop`, `enlarge`, `reduce`,
+`translate`, `pad`, `center`
+
+**Color space:**
+`hsv2rgb`, `rgb2hsv`, `greyscale`
+
+**Band management:**
+`cubeit`, `explode`, `bandnorm`, `segment`
+
+**Masking / trim:**
+`mask`, `trim`, `bandtrim`, `circle`, `outline`, `specpix`
+
+**Utility:**
+`bit2bit`, `barscale`, `cathist`, `catlab`, `catoriglab`, `makecube`, `fakecube`
+
+**Estimated effort:** 1–3 days each. The main work is handling ISIS cube I/O conventions
+(special pixel values, PVL label propagation), not the algorithms themselves.
+
+## Tier 2 — Moderate (~75 apps) {#sec-tier2}
+
+Real algorithms, but existing Python libraries provide the core functionality.
+The work is wiring up I/O, special-pixel handling, and ISIS conventions.
+
+**Spatial filters** (scipy.ndimage / scikit-image):
+`lowpass`, `highpass`, `gauss`, `median`, `sharpen`, `gradient`, `deriv`, `divfilter`,
+`kuwahara`, `kernfilter`, `noisefilter`, `svfilter`, `mode`, `trimfilter`
+
+**Spectral filters:**
+`spechighpass`, `speclowpass`, `specdivfilter`
+
+**Fourier domain** (numpy.fft):
+`fft`, `ifft`, `butterworth`
+
+**Map projection** (rasterio / pyproj — csm2map already covers cam2map):
+`cam2map`, `map2map`, `map2cam`, `nocam2map`, `pixel2map`, `skymap`, `ringscam2map`,
+`cam2cam`, `maptemplate`, `mappt`, `mapsize`, `mapgrid`, `maptrim`, `mosrange`, `maplab`
+
+**Import / export** (GDAL / rasterio / pvl):
+`isis2std`, `std2isis`, `isis2fits`, `fits2isis`, `isis2pds`, `pds2isis`, `isis2raw`,
+`raw2isis`, `isis2ascii`, `ascii2isis`, `isis2gml`, `vicar2isis`, `isisexport`,
+`isisimport`
+
+**Mosaicking** (rasterio.merge + custom logic):
+`automos`, `handmos`, `mapmos`, `noseam`, `blend`, `equalizer`, `tonematch`
+
+**PCA / multivariate** (scikit-learn / numpy.linalg):
+`pca`
+
+**Stripe / noise removal:**
+`dstripe`, `fillgap`, `lineeq`, `desmear`, `desmile`
+
+**Label / metadata** (pvl):
+`editlab`, `copylabel`, `cubeatt`, `getkey`, `trackextract`
+
+**Registration** (scikit-image / OpenCV):
+`coreg`, `findfeatures`
+
+**Estimated effort:** 1–5 days each, depending on the amount of ISIS-convention handling.
+
+## Tier 3 — Complex (~70 apps) {#sec-tier3}
+
+Deep ISIS-specific algorithms with no drop-in Python replacement.
+Porting requires understanding the algorithm, not just wrapping a library.
+
+### SPICE / camera model initialization
+
+`spiceinit`, `spicefit`, `csminit`, `caminfo`, `campt`, `camrange`, `camstats`,
+`camtrim`, `camdev`
+
+ALE partially replaces `spiceinit` for ISD generation, but the full `spiceinit`
+includes kernel selection logic, label attachment, kernel database management, and
+blob writing that ALE does not handle.
+
+### Bundle adjustment
+
+**`jigsaw`** — Full photogrammetric bundle adjustment.
+Approximately 15,000 lines of C++ implementing sparse matrix solution (via SuiteSparse),
+robust outlier rejection, parameter weighting, and error propagation.
+No Python equivalent exists for planetary photogrammetry.
+This is the single hardest app to port.
+
+### Control network operations
+
+`autoseed`, `cnetadd`, `cnetref`, `cnetcheck`, `cnetcombinept`, `cnetextract`,
+`cnetmerge`, `cnetnewradii`, `cnetsplit`, `cnetstats`, `cnettable`, `cnetthinner`,
+`cnetwinnow`, `pointreg`, `seedgrid`, `deltack`, `cnet2dem`
+
+plio covers I/O (`from_isis()` / `to_isis()`), but none of the algorithmic operations.
+
+### Photometric modeling
+
+`photomet`, `photemplate`, `phocube`, `phoempglobal`, `phoemplocal`, `phohillier`,
+`shade`, `shadow`, `shadowtau`
+
+Implements Hapke, Minnaert, Lambert, Lunar-Lambert, and other photometric models.
+No standard Python package provides these.
+
+### Geometry (camera-dependent)
+
+`noproj`, `warp`, `slither`, `appjit`, `findrx`, `remrx`, `framestitch`
+
+### SPICE kernel writers
+
+`ckwriter`, `spkwriter`
+
+### Overlap / footprint operations
+
+`findimageoverlaps`, `overlapstats`, `footprintinit`, `footprintmerge`, `getsn`
+
+### Radiometric correction (instrument-specific)
+
+Each instrument has a dedicated calibration app encoding years of detector-specific
+knowledge: dark current models, flat fields, nonlinearity, temperature dependencies.
+
+**Estimated effort:** weeks to months each.
+Jigsaw alone would be a multi-person-year effort.
+
+## Tier 4 — GUI Applications (~7 apps) {#sec-tier4}
+
+Qt-based interactive tools requiring a fundamentally different approach for Python.
+
+| ISIS App | Purpose | Python Status |
+|---|---|---|
+| **qmos** | Mosaic review | **Replaced** by isistools `MosaicReview` (Panel/Bokeh) |
+| **qnet** | Control network editor | **Replaced** by isistools `TiepointReview` (Panel/Bokeh) |
+| **qview** | General cube viewer | Not yet replaced |
+| **qtie** | Tie-point editor | Not yet replaced |
+| **cneteditor** | Tabular cnet editor | Not yet replaced |
+| **ipce** | Integrated photogrammetric environment | Not yet replaced (USGS's own next-gen, still Qt/C++) |
+
+The USGS built **IPCE** as the next-gen replacement for qmos/qnet/qtie, but it remains
+Qt/C++ and therefore has the same ARM problem.
+The isistools Panel/Bokeh/HoloViews approach is currently the only browser-based
+alternative that runs natively on ARM.
+
+
+# Existing Python Ecosystem Coverage {#sec-ecosystem}
+
+## Well-Covered (Direct Replacement Exists)
+
+| Python Package | ISIS Functionality Replaced | Coverage |
+|---|---|---|
+| **pvl** | PVL label parsing (catlab, getkey, editlab) | Excellent |
+| **plio** | Control network I/O (cnetbin2pvl, cnetpvl2bin) | Good |
+| **ale** | SPICE / ephemeris loading (partial spiceinit) | Good (~30 instruments) |
+| **usgscsm + csmapi** | Camera models (campt, camrange, groundToImage) | Good |
+| **rasterio / GDAL** | Cube I/O, format conversion, reprojection | Excellent |
+| **pyproj** | Map projection definitions, coordinate transforms | Excellent |
+| **scipy.ndimage** | All spatial filters | Excellent |
+| **numpy** | All pixel math, statistics | Excellent |
+| **numpy.fft** | Fourier domain operations | Excellent |
+| **scikit-image** | Feature detection, registration | Good |
+| **csm2map** (isistools) | cam2map | Production-quality |
+| **isistools** | qmos, qnet | Production-quality |
+
+## Partially Covered
+
+| Area | What Python Has | Gap |
+|---|---|---|
+| spiceinit | ale generates ISDs | Kernel selection, label attachment, blob management |
+| Control net algorithms | plio does I/O | autoseed, pointreg, cnetthinner — algorithmic operations |
+| Photometric correction | Nothing standard | Hapke, Minnaert, Lunar-Lambert models |
+| Mosaicking | rasterio.merge for simple cases | Tone matching (equalizer), seam removal (noseam) |
+
+## Not Covered
+
+| Area | ISIS Apps | Difficulty |
+|---|---|---|
+| Bundle adjustment | jigsaw | Multi-person-year — ~15K lines of sparse linear algebra |
+| Radiometric calibration | All `*cal` apps (~50 total) | Instrument-specific; each encodes years of detector knowledge |
+| Instrument ingestion | All `*2isis` apps (~40 total) | Each handles a specific raw PDS format |
+| HiRISE pipeline | `hi*` apps (~25) | Deeply integrated chain of detector-specific corrections |
+
+## Overall Coverage Estimate
+
+| Tier | Python Coverage |
+|---|---|
+| Tier 1 (trivial) | ~95% — numpy/scipy can do all of these |
+| Tier 2 (moderate) | ~70% — existing libraries cover the algorithms, ISIS conventions need wrapping |
+| Tier 3 (complex) | ~15% — ale + usgscsm cover camera models; plio covers cnet I/O; algorithms remain |
+| Tier 4 (GUI) | ~40% — isistools covers qmos/qnet; qview, ipce remain |
+| **Overall** | **~35–40%** of base functionality has a viable Python path today |
+
+
+# Strategic Assessment {#sec-strategy}
+
+## The 80/20 Rule
+
+About 20 apps account for ~80% of actual ISIS usage:
+`spiceinit`, `cam2map`, `jigsaw`, `stats`, `crop`, `stretch`, `automos`, and the
+`*cal` apps for active missions (CTX, HiRISE, LROC, CaSSIS).
+csm2map already replaces the single most-used app.
+
+## What Doesn't Need Replacing
+
+ISIS3 will continue to run on Linux.
+Tools that are:
+
+- **used only in batch on HPC clusters** (jigsaw, autoseed on large networks), or
+- **deeply entangled with ISIS internals** (spiceinit's full kernel management),
+
+can remain ISIS-native, invoked via SSH, containers, or kalasiris subprocess calls.
+The CSM ecosystem (ale + usgscsm) provides the interoperability bridge: a cube
+processed through ISIS's `spiceinit` + `jigsaw` can be projected with csm2map on
+a Mac.
+
+## The Hybrid Approach
+
+The most practical path is **not** a wholesale rewrite but an incremental migration
+where Python tools replace ISIS apps one at a time, maintaining interoperability
+through shared file formats (ISIS cubes, PDS products, CSM ISDs, GeoTIFFs).
+
+```
+                    ISIS (Linux / Rosetta)        Python (native ARM)
+                    ─────────────────────        ────────────────────
+Raw PDS EDR ──────► *2isis (ingestion)
+                         │
+                         ▼
+                    spiceinit ──────────────► ale.loads() → ISD
+                         │                        │
+                         ▼                        ▼
+                    *cal (calibration) ◄──── Python cal (future)
+                         │
+                         ▼
+                    cam2map ◄───────────────► csm2map ✓
+                         │                        │
+                         ▼                        ▼
+                    automos ◄───────────────► Python automos (future)
+                         │                        │
+                         ▼                        ▼
+                    jigsaw (stays ISIS)       isistools review ✓
+```
+
+This approach:
+
+- **Preserves investment** in existing ISIS workflows
+- **Prioritizes the Mac-critical path** — projection, visualization, calibration
+- **Defers the hardest targets** (jigsaw, spiceinit) indefinitely
+- **Validates incrementally** — each new Python tool can be compared against its ISIS
+  equivalent (as csm2map does with its `compare` command)
+
+## Instrument Calibration: The Real Moat
+
+The ~50 `*cal` apps each encode years of instrument-specific knowledge.
+These cannot be auto-generated or mechanically translated — they require domain experts
+for each instrument.
+However, the algorithms are typically straightforward (dark subtraction, flat-field
+division, I/F scaling) — the complexity is in the _calibration data and coefficients_,
+not the code structure.
+
+
+# Near-Term Roadmap: CTX End-to-End {#sec-roadmap}
+
+The CTX (Context Camera) pipeline is one of the simplest in ISIS and a natural first
+target for a complete Python replacement.
+
+## The ISIS CTX Pipeline
+
+```bash
+mroctx2isis from=input.IMG to=raw.cub      # Ingest PDS EDR
+spiceinit from=raw.cub                      # Attach SPICE kernels
+ctxcal from=raw.cub to=cal.cub              # Radiometric calibration
+ctxevenodd from=cal.cub to=clean.cub        # Even/odd column correction
+cam2map from=clean.cub to=projected.cub     # Map projection
+```
+
+## Python Replacement Status
+
+| Step | ISIS App | Python Status | Effort |
+|---|---|---|---|
+| Ingest | `mroctx2isis` | **Not started** — parse PDS3 label + raw binary | ~1 week |
+| SPICE | `spiceinit` | **Covered** — `ale.loads()` generates ISD directly | Done (ale) |
+| Calibrate | `ctxcal` | **Not started** — dark current, flat field, I/F | ~2 weeks |
+| Even/odd fix | `ctxevenodd` | **Not started** — column-wise statistics | ~2 days |
+| Project | `cam2map` | **Done** — csm2map | Done |
+
+Total estimated effort for a full Python CTX pipeline: **~4 weeks**.
+
+### ctxcal Algorithm Scope
+
+The CTX calibration algorithm (in `isis/src/mro/apps/ctxcal/`) applies:
+
+1. **Dark current subtraction** — uses overclock pixels from the cube's own buffer region
+2. **Flat-field correction** — divides by a stored calibration flat image
+3. **I/F conversion** — scales DN to radiance factor using solar distance at observation time
+
+This is modest in algorithmic complexity.
+The main porting work is locating and parsing the calibration data files (flats,
+instrument constants) and handling ISIS special pixel propagation.
+
+### mroctx2isis Algorithm Scope
+
+CTX EDRs are PDS3 products with a straightforward format:
+
+- PVL label (parsed with `pvl`)
+- Raw binary image data (16-bit unsigned, line-prefixed with buffer pixels)
+- The label contains all metadata needed for SPICE initialization
+
+A Python ingestion function would: parse the PVL label, read the raw binary into a
+numpy array, strip buffer/dark pixels, and either write an ISIS cube (via GDAL) or
+keep the array in memory for the calibration step.
+
+## Next Targets After CTX
+
+| Instrument | Pipeline Complexity | Effort | Notes |
+|---|---|---|---|
+| **Cassini ISS** | Simple (ingest + cal) | ~3 weeks | Well-documented calibration |
+| **Dawn Framing Camera** | Simple (ingest + cal) | ~2 weeks | Straightforward framing camera |
+| **LROC NAC** | Moderate (cal + echo correction) | ~4 weeks | Linescan, similar to CTX |
+| **HiRISE RED** | Complex (10 CCDs, ~25 pipeline steps) | ~3 months | Temperature-dependent dark models, channel normalization, jitter correction |
+
+## Basic Mosaicking
+
+A minimal `automos` replacement for map-projected cubes is straightforward:
+
+1. Read GeoTIFFs with their affine transforms (rasterio)
+2. Compute union bounding box
+3. Composite with priority rules (input order or average)
+4. Write output GeoTIFF with track band
+
+`rasterio.merge` provides ~80% of this functionality.
+The ISIS-specific additions (track bands, priority modes like "beneath"/"band"/"average",
+null-pixel propagation) are moderate extensions.
+
+Advanced features like tone matching (`equalizer`) and seam removal (`noseam`) can be
+deferred to a later version.
+
+
+# Long-Term Considerations {#sec-longterm}
+
+## Jigsaw: The Strategic Bottleneck
+
+Without a Python bundle adjuster for planetary photogrammetry, the control network
+pipeline will always require ISIS (or ASP) for the adjustment step.
+However, jigsaw operates on control networks and SPICE data — both of which are
+accessible from Python (via plio and ale).
+A Python jigsaw is conceivable but would be a multi-person-year effort requiring:
+
+- Sparse matrix assembly and solution (scipy.sparse + CHOLMOD or similar)
+- Robust outlier rejection
+- Parameter weighting and error propagation
+- Multi-observation geometric constraints
+
+For the foreseeable future, jigsaw remains an ISIS/Linux tool.
+The hybrid approach accommodates this: jigsaw runs on Linux, its output (adjusted
+control networks and updated SPICE) is consumed by csm2map and isistools on Mac.
+
+## The USGS Python Strategy
+
+The USGS Astrogeology Science Center is itself moving toward a Python + CSM architecture.
+[RFC 3](https://github.com/DOI-USGS/ISIS3/wiki/RFC-3-Planning-Document) (SPICE
+Modularization) plans to move all SPICE kernel calls from ISIS C++ into ALE (Python),
+estimating 500–1500 person-hours for the full migration.
+
+The envisioned pipeline is:
+
+```
+PDS file → ALE → ISD → CSM → Ground Extents → GeoTIFF
+```
+
+This aligns exactly with the csm2map architecture.
+The isistools project is positioned on the same trajectory as the USGS's own
+long-term plans.
+
+## GPU Acceleration
+
+For compute-intensive operations (resampling in csm2map, large mosaics, bundle
+adjustment), GPU acceleration via CuPy or custom CUDA/Metal kernels offers
+significant speedup potential.
+This is easier to achieve in Python (CuPy is a near-drop-in numpy replacement)
+than in ISIS3's C++ codebase.
+
+## Community and Sustainability
+
+A Python-based stack lowers the contribution barrier significantly.
+ISIS3 requires C++ expertise, Qt knowledge, and familiarity with a custom build
+system.
+Python tools can be contributed to by the broader planetary science community,
+which is increasingly Python-literate.
+
+
+# Summary {#sec-summary}
+
+| Dimension | Assessment |
+|---|---|
+| **Total ISIS3 apps** | ~367 (199 base + 31 control + 130 mission + 7 GUI) |
+| **Trivially portable** | ~55 apps (numpy one-liners) |
+| **Moderately portable** | ~75 apps (existing Python libraries) |
+| **Hard to port** | ~70 apps (ISIS-specific algorithms) |
+| **Already replaced** | cam2map (csm2map), qmos, qnet (isistools) |
+| **Current Python coverage** | ~35–40% of base functionality |
+| **Forcing deadline** | Fall 2027 (macOS 28 removes Rosetta 2) |
+| **Recommended approach** | Hybrid — incremental replacement, ISIS stays for jigsaw/spiceinit |
+| **Next milestone** | Full Python CTX pipeline (~4 weeks) |
+
+The migration from ISIS3 to Python is not a single project but a multi-year ecosystem
+shift — one that the USGS itself is pursuing.
+The isistools project, with csm2map and the mosaic/tiepoint review tools, is already
+contributing meaningfully to this transition.
+The pragmatic path forward is incremental replacement of the most-used tools,
+maintaining ISIS interoperability throughout, and prioritizing the workflows that
+Mac users need most urgently.
