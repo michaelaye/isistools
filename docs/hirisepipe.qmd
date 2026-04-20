@@ -1,0 +1,149 @@
+---
+title: "HiRISE Calibration Pipeline"
+---
+
+# hirisepipe — Python HiRISE Calibration Pipeline
+
+`hirisepipe` is a pure-Python replacement for the ISIS3 HiRISE RED processing chain:
+
+```
+hical → histitch → cubenorm
+```
+
+It reads ISIS cubes produced by `hi2isis` and applies radiometric calibration,
+channel stitching, and column normalization — all without calling ISIS.
+
+## Quick Start
+
+### Python API
+
+```python
+from isistools.hirisepipe import hical, stitch_channels, cubenorm
+
+# Single channel calibration
+cal = hical("ESP_021491_0950_RED4_0.cub", units="DN")
+
+# Full CCD pipeline (both channels)
+from isistools.hirisepipe import process_ccd
+result = process_ccd("RED4_0.cub", "RED4_1.cub", units="DN")
+```
+
+### Step-by-Step
+
+```python
+from isistools.hirisepipe.hical import hical
+from isistools.hirisepipe.stitch import stitch_channels
+from isistools.hirisepipe.cubenorm import cubenorm
+
+# Step 1: Calibrate each channel
+cal0 = hical("RED4_0.cub", units="DN")
+cal1 = hical("RED4_1.cub", units="DN")
+
+# Step 2: Stitch with balance
+stitched = stitch_channels(cal0, cal1, balance=True)
+
+# Step 3: Column normalization
+normed = cubenorm(stitched)
+```
+
+## Pipeline Stages
+
+### 1. hical — Radiometric Calibration
+
+Replaces ISIS `hical`. Implements the full 10-module calibration chain:
+
+$$
+\text{hdn} = \frac{\text{idn} - \text{ZBF} - \text{ZRev} - \text{ZD}}{\text{GLD}}
+$$
+
+$$
+\text{NLGain} = 1 - \text{GNL} \times \text{median}(\text{hdn}_\text{line})
+$$
+
+$$
+\text{odn} = \frac{\text{hdn} \times \text{GCN} \times \text{NLGain} \times \text{GFF} \times \text{GT}}{\text{GUC}}
+$$
+
+#### Calibration Modules
+
+| Module | Symbol | Description | Dimension |
+|--------|--------|-------------|-----------|
+| ZeroBufferSmooth | Zf | Buffer pixel drift extraction | Per-line |
+| ZeroBufferFit | Zd | Non-linear drift fit (pass-through by default) | Per-line |
+| ZeroReverse | Zz | Reverse-clock column offset | Per-sample |
+| ZeroDark | Zb | Temperature-corrected dark current | Per-sample |
+| GainLineDrift | Zg | Line-time gain drift (exponential model) | Per-line |
+| GainNonLinearity | Gnl | Signal-dependent non-linearity | Scalar |
+| GainChannelNormalize | Gcn | Sample gain with TDI/BIN normalization | Per-sample |
+| GainFlatField | Za | Flat field (A matrix) | Per-sample |
+| GainTemperature | Zt | FPA temperature-dependent gain | Scalar |
+| GainUnitConversion | Ziof | Unit conversion (DN, DN/μs, I/F) | Scalar |
+
+#### Two-Pass Algorithm
+
+A critical detail: the calibration uses a **two-pass** algorithm per line.
+The first pass subtracts drift, reverse-clock, and dark current, then divides
+by gain line drift. The **median** of the intermediate values is then used
+to compute the non-linearity gain correction, which is applied in the second pass
+together with the flat field, temperature, and unit conversion.
+
+### 2. stitch_channels — Channel Stitching
+
+Replaces ISIS `histitch`. Concatenates two CCD channels with optional
+radiometric balancing at the seam.
+
+In `balance=True` mode (the default), the overlap region at the channel
+seam is used to compute a multiplicative correction coefficient:
+
+$$
+\text{coeff} = \frac{\bar{x}_\text{truth\_channel}}{\bar{x}_\text{other\_channel}}
+$$
+
+The non-truth channel is multiplied by this coefficient to equalize levels.
+
+### 3. cubenorm — Column Normalization
+
+Replaces ISIS `cubenorm`. Normalizes column-to-column variations by dividing
+each column by its median, with optional preservation of the global mean.
+
+## Validation Against ISIS
+
+Validated pixel-by-pixel against ISIS `hical` output on ESP_021491_0950_RED4_0
+(35,000 × 1,024 pixels, TDI=128, BIN=1):
+
+| Metric | Value |
+|--------|-------|
+| Mean relative error | 0.08% |
+| Max relative error | 0.34% |
+| Mean absolute error | 1.2 DN |
+| Std dev match | 275.1 vs 274.9 (0.07% difference) |
+
+The remaining differences are from minor variations in lowpass filter edge
+handling and cubic spline fill implementation.
+
+## Requirements
+
+- **numpy** — array operations
+- **scipy** — cubic spline interpolation (for ZeroBufferSmooth)
+- **pvl** — ISIS cube label parsing
+- **rioxarray** / **xarray** — reading ISIS cubes via GDAL
+- **ISISDATA** — HiRISE calibration matrices at `$ISISDATA/mro/calibration/matrices/`
+
+The calibration data files from ISISDATA are required (B matrices, A matrices,
+gain files, temperature coefficients). No ISIS installation is needed.
+
+## Limitations
+
+1. **Requires hi2isis input.** The pipeline reads ISIS cubes (with ancillary
+   tables), not raw PDS EDRs directly. A Python `hi2isis` equivalent is planned.
+
+2. **I/F mode not yet supported.** I/F conversion requires SPICE for Sun-Mars
+   distance. Use `units="DN"` or `units="DN/US"` for now.
+
+3. **ZeroBufferFit is pass-through.** The non-linear Levenberg-Marquardt fit
+   option (rarely used in practice, disabled in hical.0023.conf) is not
+   implemented.
+
+4. **Single CCD only.** Multi-CCD mosaic assembly (equalizer + automos)
+   is not yet implemented — use csm2map for map projection and rasterio
+   for mosaicking.
