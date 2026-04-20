@@ -26,7 +26,7 @@ process_ccd : function
 from isistools.hirisepipe.cubenorm import cubenorm
 from isistools.hirisepipe.hical import hical, hical_from_edr
 from isistools.hirisepipe.ingest import HiRISEEDR, ingest_hirise_edr
-from isistools.hirisepipe.pipeline import calibrate_ccd, create_red_mosaic
+from isistools.hirisepipe.pipeline import calibrate_all, calibrate_ccd, create_red_mosaic
 from isistools.hirisepipe.stitch import stitch_channels
 
 __all__ = [
@@ -36,6 +36,7 @@ __all__ = [
     "hical",
     "hical_from_edr",
     "ingest_hirise_edr",
+    "calibrate_all",
     "calibrate_ccd",
     "stitch_channels",
 ]

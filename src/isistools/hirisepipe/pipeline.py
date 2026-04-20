@@ -41,6 +41,7 @@ def calibrate_ccd(
     channel0_path: str | Path,
     channel1_path: str | Path,
     *,
+    output_path: str | Path | None = None,
     units: str = "DN",
     matrices_dir: Path | None = None,
     balance: bool = True,
@@ -49,6 +50,21 @@ def calibrate_ccd(
     """Calibrate a single HiRISE CCD: hical both channels, stitch, cubenorm.
 
     Accepts PDS EDR files (.IMG) or ISIS cubes (.cub).
+
+    Parameters
+    ----------
+    channel0_path, channel1_path : path-like
+        Paths to channel 0 and 1 files.
+    output_path : path-like, optional
+        If provided, write the calibrated CCD as a TIFF.
+    units : str
+        Calibration units ("DN", "DN/US", or "IOF").
+    matrices_dir : Path, optional
+        Calibration matrices directory.
+    balance : bool
+        Apply balance correction during stitching.
+    normalize : bool
+        Apply column normalization after stitching.
 
     Returns
     -------
@@ -81,6 +97,9 @@ def calibrate_ccd(
         t0 = time.perf_counter()
         stitched = cubenorm(stitched)
         _log(f"  Normalized in {time.perf_counter() - t0:.1f}s")
+
+    if output_path is not None:
+        _write_tiff(stitched, Path(output_path))
 
     return stitched
 
@@ -201,6 +220,185 @@ def _find_geometry_source(
     )
 
 
+def _estimate_ccd_memory(edr_path: Path) -> float:
+    """Estimate peak memory per CCD worker in bytes.
+
+    Each worker holds: raw image (int16) + 2 calibrated channels (float32)
+    + stitched (float32) + cubenorm copy (float32).
+    """
+    import pvl
+
+    label = pvl.load(str(edr_path))
+    lines = int(label["IMAGE"]["LINES"])
+    samples = int(label["IMAGE"]["LINE_SAMPLES"])
+    # Peak: ~4 float32 arrays of (lines × 2*samples) during stitch+norm
+    return lines * samples * 2 * 4 * 4  # ~4 arrays, 2x width, 4 bytes each
+
+
+def _smart_max_workers(
+    sample_edr: Path,
+    n_ccds: int,
+    memory_fraction: float = 0.8,
+) -> int:
+    """Calculate how many parallel workers fit in available memory.
+
+    Uses 80% of currently available RAM by default.
+
+    Returns
+    -------
+    int
+        Number of workers (at least 1, at most n_ccds).
+    """
+    try:
+        import psutil
+
+        available = psutil.virtual_memory().available
+    except ImportError:
+        import os
+
+        # Fallback: assume 8 GB available if psutil not installed
+        available = 8 * 1024**3
+        _log("[yellow]psutil not installed — assuming 8 GB available[/yellow]")
+
+    budget = available * memory_fraction
+    per_ccd = _estimate_ccd_memory(sample_edr)
+    workers = max(1, int(budget / per_ccd))
+    workers = min(workers, n_ccds, os.cpu_count() or 4)
+
+    _log(
+        f"  Memory: {available / 1e9:.1f} GB available, "
+        f"~{per_ccd / 1e9:.1f} GB/CCD → {workers} workers"
+    )
+    return workers
+
+
+def _calibrate_ccd_to_file(args: tuple) -> Path:
+    """Worker for parallel calibrate_all. Returns output path."""
+    ccdno, ch0, ch1, out_path, units, matrices_dir = args
+    _log(f"  [RED{ccdno}] Starting...")
+    t0 = time.perf_counter()
+    calibrate_ccd(
+        ch0,
+        ch1,
+        output_path=out_path,
+        units=units,
+        matrices_dir=matrices_dir,
+    )
+    _log(f"  [RED{ccdno}] Done in {time.perf_counter() - t0:.1f}s → {out_path.name}")
+    return out_path
+
+
+def calibrate_all(
+    obsid: str,
+    ccds: list[int] | None = None,
+    *,
+    output_dir: str | Path | None = None,
+    units: str = "DN",
+    matrices_dir: Path | None = None,
+    search_dirs: list[Path] | None = None,
+    parallel: bool = True,
+    max_workers: int | None = None,
+) -> list[Path]:
+    """Calibrate all CCDs and write per-CCD TIFFs.
+
+    This is the recommended workflow for large images: calibrate each
+    CCD independently to a TIFF, then project each one separately
+    with csm2map.  Avoids holding multiple CCDs in memory at once.
+
+    Parameters
+    ----------
+    obsid : str
+        HiRISE observation ID.
+    ccds : list of int, optional
+        RED CCD numbers.  Default [4, 5].
+    output_dir : path-like, optional
+        Directory for output TIFFs.  Defaults to current directory.
+    units : str
+        Calibration units.
+    matrices_dir : Path, optional
+        Calibration matrices directory.
+    search_dirs : list of Path, optional
+        Directories to search for EDR files.
+    parallel : bool
+        If True (default), calibrate CCDs in parallel.
+    max_workers : int or "smart", optional
+        Maximum parallel workers.  If None or ``"smart"`` (default),
+        auto-calculates based on available memory (uses 80% of free RAM).
+        Set explicitly to control parallelism.
+
+    Returns
+    -------
+    list of Path
+        Paths to the calibrated per-CCD TIFFs.
+    """
+    if ccds is None:
+        ccds = [4, 5]
+    if output_dir is None:
+        output_dir = Path.cwd()
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve EDR paths and build worker args
+    ccd_args = []
+    for ccdno in sorted(ccds):
+        ch0, ch1 = _find_edr_channels(obsid, ccdno, search_dirs)
+        out_path = output_dir / f"{obsid}_RED{ccdno}.cal.norm.tif"
+        ccd_args.append((ccdno, ch0, ch1, out_path, units, matrices_dir))
+
+    if parallel and len(ccd_args) > 1:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        if max_workers is None or max_workers == "smart":
+            max_workers = _smart_max_workers(
+                ccd_args[0][1],
+                len(ccd_args),  # first EDR path, n_ccds
+            )
+
+        _log(f"Calibrating {obsid} {len(ccd_args)} CCDs → {output_dir} ({max_workers} workers)")
+        t0 = time.perf_counter()
+
+        try:
+            from rich.progress import (
+                BarColumn,
+                Progress,
+                SpinnerColumn,
+                TextColumn,
+                TimeElapsedColumn,
+            )
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                TextColumn("{task.completed}/{task.total} CCDs"),
+                TimeElapsedColumn(),
+                console=_console,
+            ) as progress:
+                task = progress.add_task(
+                    f"Calibrating ({max_workers} workers)",
+                    total=len(ccd_args),
+                )
+                with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {executor.submit(_calibrate_ccd_to_file, a): a[0] for a in ccd_args}
+                    output_paths = []
+                    for future in as_completed(futures):
+                        output_paths.append(future.result())
+                        progress.update(task, advance=1)
+        except ImportError:
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                output_paths = list(executor.map(_calibrate_ccd_to_file, ccd_args))
+
+        output_paths.sort()
+        _log(f"[green]All CCDs calibrated in {time.perf_counter() - t0:.1f}s[/green]")
+    else:
+        _log(f"Calibrating {obsid} {len(ccd_args)} CCDs → {output_dir}")
+        output_paths = []
+        for args in ccd_args:
+            output_paths.append(_calibrate_ccd_to_file(args))
+
+    return output_paths
+
+
 def create_red_mosaic(
     obsid: str,
     ccds: list[int] | None = None,
@@ -315,11 +513,13 @@ def _create_raw_mosaic(
 
     # Calibrate CCDs
     if parallel and len(ccd_args) > 1:
-        import os
         from concurrent.futures import ProcessPoolExecutor, as_completed
 
-        if max_workers is None:
-            max_workers = min(len(ccd_args), os.cpu_count() or 4)
+        if max_workers is None or max_workers == "smart":
+            max_workers = _smart_max_workers(
+                ccd_args[0][1],
+                len(ccd_args),  # first EDR path, n_ccds
+            )
 
         t0 = time.perf_counter()
         try:

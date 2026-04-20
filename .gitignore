@@ -68,3 +68,4 @@ Thumbs.db
 
 # Playwright
 .playwright-mcp/
+tests/data/
