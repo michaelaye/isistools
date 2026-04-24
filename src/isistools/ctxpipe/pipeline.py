@@ -196,7 +196,7 @@ def ctx_project(
             resolution = compute_ground_sample_distance(model, body)
 
         if projection is None:
-            projection = _auto_projection(lat_range, body)
+            projection = _auto_projection(lat_range, lon_range, body)
 
         grid = grid_from_params(
             crs=projection,
@@ -353,15 +353,27 @@ def _load_camera_auto(geometry_source: str | Path):
 
 def _auto_projection(
     lat_range: tuple[float, float],
+    lon_range: tuple[float, float],
     body,
 ) -> str:
-    """Select projection based on latitude range.
+    """Select projection based on latitude range, centered on the image.
 
     - |lat| < 70: Sinusoidal (area-preserving, good for mid-latitudes)
     - |lat| >= 70: Polar Stereographic (avoids singularity at poles)
+
+    The projection's central meridian (``lon_0``) is set to the mean
+    image longitude.  This keeps the image's axis-aligned bounding
+    box in projected coordinates tight against the actual ground
+    footprint.  Leaving ``lon_0 = 0`` (as earlier versions did) made
+    any image far from the prime meridian explode its bounding box
+    — e.g. a CTX strip at lon 102° with a 5° latitude span would
+    occupy ~470 km in projected X even though the ground footprint
+    was only ~30 km wide, which in turn made
+    ``compute_transform_coarse`` allocate the transform arrays on a
+    4 billion-pixel grid.
     """
     center_lat = (lat_range[0] + lat_range[1]) / 2.0
-    center_lon_placeholder = 0.0  # will be overridden by grid_from_params
+    center_lon = (lon_range[0] + lon_range[1]) / 2.0
 
     a = body.radius_equatorial_m
     b = body.radius_polar_m
@@ -370,13 +382,13 @@ def _auto_projection(
         # Polar Stereographic
         lat_0 = 90.0 if center_lat > 0 else -90.0
         return (
-            f"+proj=stere +lat_0={lat_0} +lon_0={center_lon_placeholder} "
+            f"+proj=stere +lat_0={lat_0} +lon_0={center_lon} "
             f"+a={a} +b={b} +units=m +no_defs +type=crs"
         )
     else:
         # Sinusoidal (ISIS default)
         return (
-            f"+proj=sinu +lon_0={center_lon_placeholder} +a={a} +b={b} +units=m +no_defs +type=crs"
+            f"+proj=sinu +lon_0={center_lon} +a={a} +b={b} +units=m +no_defs +type=crs"
         )
 
 

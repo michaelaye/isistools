@@ -150,6 +150,33 @@ No ISIS installation is needed for the pipeline itself.
 3. **Summing mode 2 not yet validated.** The code handles summing mode 2 following
    the ISIS algorithm, but no summing=2 reference data has been tested.
 
+## Projection and memory notes
+
+When no `--map` file is provided, `ctxpipe project` picks a projection
+automatically via `_auto_projection`:
+
+- **Sinusoidal** (`+proj=sinu`) for |center-latitude| < 70°.
+- **Polar Stereographic** (`+proj=stere`) for |center-latitude| ≥ 70°.
+
+For both, the projection's central meridian (`+lon_0`) is set to the
+**mean longitude of the image footprint**, not to the prime meridian.
+This matters for memory: a long meridional CTX strip has a narrow
+ground footprint (~30 km wide), but in a Sinusoidal projection
+centered at `lon_0 = 0` the strip's axis-aligned bounding box grows
+with its latitude span because the projected X shift varies by
+`cos(lat)`. Centering `lon_0` on the image keeps the bounding box
+tight and the output raster sized to the actual footprint.
+
+The coordinate-transform arrays (`CoordinateMap.input_lines` /
+`input_samples`) are **float32** throughout. float32 represents every
+integer up to 16,777,216 exactly, which gives sub-pixel precision
+better than 10⁻³ pixels anywhere in a CTX frame — well below the CSM
+model's own pointing uncertainty. Peak memory for a
+53,000-line × 12,000-sample projected output on a 24 GB machine lands
+around 20–24 GB (transform + resample + input cube held
+simultaneously). For much larger outputs (HiRISE RDR scale) the peak
+scales roughly linearly with output pixel count.
+
 ## Full Pipeline: EDR → Map-Projected GeoTIFF
 
 The `ctx_edr_to_map` function chains ctxpipe calibration with csm2map projection:

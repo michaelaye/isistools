@@ -126,8 +126,8 @@ def _bilinear_upsample_pair(
 class CoordinateMap:
     """Dense mapping from output pixel coords to input pixel coords."""
 
-    input_lines: np.ndarray  # shape (height, width), float64
-    input_samples: np.ndarray  # shape (height, width), float64
+    input_lines: np.ndarray  # shape (height, width), float32
+    input_samples: np.ndarray  # shape (height, width), float32
     valid: np.ndarray  # shape (height, width), bool
 
     @property

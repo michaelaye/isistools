@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-04-24
+
+### Fixed
+
+- **ctxpipe `project`: auto-projection central meridian.** `_auto_projection`
+  in `ctxpipe/pipeline.py` was emitting projection strings with
+  `+lon_0=0.0` regardless of the image's actual longitude, relying on a
+  comment ("will be overridden by grid_from_params") that was simply
+  untrue — `grid_from_params` uses the CRS string as-is and does not
+  touch `lon_0`. For any image whose longitude is far from the prime
+  meridian, the axis-aligned bounding box in Sinusoidal projection
+  coordinates inflated catastrophically. Concrete reproducer —
+  `B17_016442_2252_XI_45N257W` (a 5° × 1.7° strip at lon ≈ 102°, lat
+  45°N): the old behavior allocated a 78,770 × 53,136 = 4.19 billion-pixel
+  output grid (467 km × 315 km axis-aligned), the transform arrays blew
+  past 60 GB, and macOS SIGKILL'd the process on a 24 GB machine.
+  With `lon_0` set to the mean image longitude the grid collapses to
+  12,303 × 53,095 = 6.5 × 10⁸ pixels (73 km × 315 km, tight against the
+  actual footprint), peak memory drops to ~23 GB, wall time ~82 s end
+  to end.
+
+### Changed
+
+- **`ground_to_image_batch` returns float32** (was default float64).
+  Image coordinates in CSM's output space are bounded by the input
+  sensor's line/sample range — CTX ≤ 52 k × 5 k, HiRISE ≤ 80 k × 5 k.
+  float32 represents every integer up to 16,777,216 exactly, giving
+  sub-pixel precision better than 10⁻³ px anywhere in a CTX frame,
+  which is orders of magnitude below the CSM model's own pointing
+  uncertainty. Matching float32 end-to-end also removes an implicit
+  cast before `_bilinear_upsample_pair` and halves the coarse-grid
+  memory footprint. No observable effect on output image quality.
+- Stale `CoordinateMap` docstring corrected: `input_lines` /
+  `input_samples` are declared float32 to match the code (the struct
+  had always produced float32 via `_bilinear_upsample_pair`, but the
+  docstring claimed float64).
+
 ## [0.10.0] - 2026-04-14
 
 ### BREAKING

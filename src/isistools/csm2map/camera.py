@@ -499,8 +499,18 @@ def ground_to_image_batch(
     z = frad * sin_lat
 
     n = len(flat)
-    out_lines = np.full(n, np.nan)
-    out_samps = np.full(n, np.nan)
+    # float32 is enough for image coordinates: the line/sample values
+    # sit in 0..n_lines and 0..n_samples (CTX ≤ 52 k lines × 5 k
+    # samples, HiRISE ≤ 80 k × 5 k).  float32 represents integers up
+    # to 16_777_216 exactly; for CTX this gives >0.001-pixel precision
+    # anywhere in the frame, far below the CSM model's own pointing
+    # uncertainty (sub-pixel but many multiples of 10⁻³ px).  Using
+    # float32 also keeps the dtype consistent end-to-end: the
+    # downstream ``_bilinear_upsample_pair`` upsamples in float32
+    # already, so staying in float32 here avoids an implicit cast and
+    # halves the coarse-grid memory footprint.
+    out_lines = np.full(n, np.nan, dtype=np.float32)
+    out_samps = np.full(n, np.nan, dtype=np.float32)
 
     if workers is None:
         workers = os.cpu_count() or 1
