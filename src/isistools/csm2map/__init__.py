@@ -50,6 +50,7 @@ from isistools.csm2map.camera import TargetBody
 from isistools.csm2map.grid import OutputGrid
 from isistools.csm2map.pipeline import csm2map
 from isistools.csm2map.resample import Interpolation
+from isistools.csm2map.tiled import csm2map_tiled
 from isistools.csm2map.transform import CoordinateMap
 
 __all__ = [
@@ -58,4 +59,5 @@ __all__ = [
     "OutputGrid",
     "TargetBody",
     "csm2map",
+    "csm2map_tiled",
 ]

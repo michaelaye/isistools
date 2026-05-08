@@ -206,6 +206,119 @@ def test_compute_transform_coarse_validity_mask(monkeypatch):
     assert coord_map.coords.shape == (2, grid.height, grid.width)
 
 
+def test_bilinear_upsample_window_matches_full():
+    """Windowed bilinear upsample is bit-identical to slicing a full upsample.
+
+    This is the key correctness invariant for the tiled path: tile
+    boundaries must be pixel-exact, so adjacent tiles agree without any
+    overlap-and-trim. Equivalent to asserting the L2 plan's "build
+    coarse grid once globally, windowed upsample per tile" yields the
+    same pixels as a single global upsample.
+    """
+    from isistools.csm2map.transform import (
+        _bilinear_upsample_pair,
+        _bilinear_upsample_pair_window,
+    )
+
+    rng = np.random.default_rng(42)
+    nrc, ncc = 5, 7
+    coarse_a = rng.standard_normal((nrc, ncc)).astype(np.float32)
+    coarse_b = rng.standard_normal((nrc, ncc)).astype(np.float32)
+    full_h, full_w = 73, 91
+
+    full = _bilinear_upsample_pair(coarse_a, coarse_b, full_h, full_w)
+
+    # Tile the (full_h, full_w) output into 4 windows of varying sizes,
+    # including the bottom-right edge tile that's not a multiple of
+    # tile_size, and assert each matches the corresponding slice of full.
+    tiles = [
+        (0, 0, 40, 50),
+        (0, 50, 40, 41),
+        (40, 0, 33, 50),
+        (40, 50, 33, 41),
+    ]
+    for row0, col0, h_t, w_t in tiles:
+        windowed = _bilinear_upsample_pair_window(
+            coarse_a, coarse_b, full_h, full_w, row0, col0, h_t, w_t
+        )
+        expected = full[:, row0 : row0 + h_t, col0 : col0 + w_t]
+        np.testing.assert_array_equal(windowed, expected)
+
+
+def test_coordinate_map_for_window_matches_full(monkeypatch):
+    """coordinate_map_for_window slices match a full compute_transform_coarse.
+
+    Builds a small synthetic grid, runs both paths through a
+    monkeypatched ground_to_image_batch, and asserts that for any
+    window the tiled path produces the same coords + valid mask as the
+    corresponding slice of the global CoordinateMap.
+    """
+    from isistools.csm2map import transform as transform_mod
+    from isistools.csm2map.grid import grid_from_params
+
+    grid = grid_from_params(
+        crs="+proj=eqc +lat_ts=0 +lon_0=0 +a=3396190 +b=3376200 +units=m +no_defs +type=crs",
+        resolution=10000.0,
+        lat_min=-2.0,
+        lat_max=2.0,
+        lon_min=-2.0,
+        lon_max=2.0,
+    )
+
+    def fake_ground_to_image(model, lat, lon, radii):
+        # Smoothly varying lines/samples driven by lat/lon so the
+        # bilinear upsample exercises non-trivial gradients. Sprinkle
+        # one NaN and one OOB value so the validity mask is non-trivial.
+        lines = (300.0 + 50.0 * lat / 0.04).astype(np.float32)
+        samps = (300.0 + 50.0 * lon / 0.04).astype(np.float32)
+        # Force one NaN at index (0, 0)
+        if lines.size > 0:
+            lines.flat[0] = np.nan
+        # Force one OOB sample (large) somewhere predictable
+        if samps.size > 1:
+            samps.flat[-1] = 1_000_000.0
+        return lines, samps
+
+    monkeypatch.setattr(transform_mod, "ground_to_image_batch", fake_ground_to_image)
+
+    full = transform_mod.compute_transform_coarse(
+        model=None,
+        grid=grid,
+        surface_radius=3396190.0,
+        step=8,
+        input_n_lines=500,
+        input_n_samples=500,
+    )
+    state = transform_mod.compute_coarse_state(
+        model=None,
+        grid=grid,
+        surface_radius=3396190.0,
+        step=8,
+        input_n_lines=500,
+        input_n_samples=500,
+    )
+
+    h, w = grid.height, grid.width
+    # A window that covers the full grid in two halves, plus an interior
+    # block, exercises tile boundaries and edge handling.
+    h_half = h // 2
+    w_half = w // 2
+    windows = [
+        (0, 0, h_half, w_half),
+        (0, w_half, h_half, w - w_half),
+        (h_half, 0, h - h_half, w_half),
+        (h_half, w_half, h - h_half, w - w_half),
+    ]
+    for row0, col0, h_t, w_t in windows:
+        win_map = transform_mod.coordinate_map_for_window(state, row0, col0, h_t, w_t)
+        np.testing.assert_array_equal(
+            win_map.coords, full.coords[:, row0 : row0 + h_t, col0 : col0 + w_t]
+        )
+        np.testing.assert_array_equal(
+            win_map.valid, full.valid[row0 : row0 + h_t, col0 : col0 + w_t]
+        )
+
+
 @pytest.mark.slow
 def test_ctx_end_to_end():
     """End-to-end test with real CTX data. Requires ISIS + CSM deps + data."""

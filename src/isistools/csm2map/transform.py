@@ -158,6 +158,215 @@ class CoordinateMap:
         return self.coords.shape[1:]
 
 
+@dataclass
+class CoarseState:
+    """Coarse-grid CSM evaluation, sufficient to upsample any output window.
+
+    For the tiled output path: evaluate CSM ONCE on the coarse grid that
+    spans the full output, then upsample only into per-tile windows.
+    The coarse arrays are tiny (~170 KB for a CTX 12k × 53k output at
+    step=32), so holding them resident across all tiles is free.
+
+    Attributes
+    ----------
+    coarse_lines, coarse_samps
+        Output of ``ground_to_image_batch`` on the coarse grid; shape
+        ``(nrows_coarse, ncols_coarse)``, dtype matching what
+        ``ground_to_image_batch`` returns (currently float32).
+    grid_h, grid_w
+        Full output dimensions. Used to derive coarse-to-output stride
+        so that any window upsamples consistently with a single global
+        upsample of the same coarse arrays.
+    input_n_lines, input_n_samples
+        Input image extent for the in-bounds validity check; mirrors
+        ``compute_transform_coarse``'s arguments.
+    """
+
+    coarse_lines: np.ndarray
+    coarse_samps: np.ndarray
+    grid_h: int
+    grid_w: int
+    input_n_lines: int | None
+    input_n_samples: int | None
+
+
+def _bilinear_upsample_pair_window(
+    coarse_a: np.ndarray,
+    coarse_b: np.ndarray,
+    full_h: int,
+    full_w: int,
+    row0: int,
+    col0: int,
+    h_t: int,
+    w_t: int,
+    workers: int | None = None,
+) -> np.ndarray:
+    """Bilinear-upsample a (h_t, w_t) window starting at (row0, col0).
+
+    The coarse-to-output stride is derived from ``full_h`` / ``full_w``
+    (NOT from the window size), so a window upsample produces values
+    bit-identical to slicing the same window out of a global upsample
+    on ``(full_h, full_w)``. Tile boundaries are pixel-exact — no
+    overlap, no seam-trim required.
+
+    Returns a single ``(2, h_t, w_t)`` float32 buffer suitable for
+    ``CoordinateMap.coords``.
+    """
+    nrc, ncc = coarse_a.shape
+    step_r = (full_h - 1) / (nrc - 1) if nrc > 1 else 1.0
+    step_c = (full_w - 1) / (ncc - 1) if ncc > 1 else 1.0
+
+    a32 = coarse_a.astype(np.float32, copy=False)
+    b32 = coarse_b.astype(np.float32, copy=False)
+
+    # Window-local column indices in coarse-grid coordinates
+    c = np.arange(col0, col0 + w_t, dtype=np.float32) / np.float32(step_c)
+    c0 = np.floor(c).astype(np.intp)
+    np.clip(c0, 0, ncc - 2, out=c0)
+    c1 = c0 + 1
+    cf = (c - c0.astype(np.float32))[None, :]
+    one_cf = np.float32(1.0) - cf
+    c0_row = c0[None, :]
+    c1_row = c1[None, :]
+
+    out = np.empty((2, h_t, w_t), dtype=np.float32)
+    out_a = out[0]
+    out_b = out[1]
+
+    def _process_stripe(r_lo: int, r_hi: int) -> None:
+        # r_lo/r_hi are window-local; convert to global rows for stride
+        r = np.arange(row0 + r_lo, row0 + r_hi, dtype=np.float32) / np.float32(step_r)
+        r0 = np.floor(r).astype(np.intp)
+        np.clip(r0, 0, nrc - 2, out=r0)
+        r1 = r0 + 1
+
+        rf = (r - r0.astype(np.float32))[:, None]
+        one_rf = np.float32(1.0) - rf
+
+        w00 = one_rf * one_cf
+        w01 = one_rf * cf
+        w10 = rf * one_cf
+        w11 = rf * cf
+
+        r0c = r0[:, None]
+        r1c = r1[:, None]
+
+        out_a[r_lo:r_hi] = (
+            a32[r0c, c0_row] * w00
+            + a32[r0c, c1_row] * w01
+            + a32[r1c, c0_row] * w10
+            + a32[r1c, c1_row] * w11
+        )
+        out_b[r_lo:r_hi] = (
+            b32[r0c, c0_row] * w00
+            + b32[r0c, c1_row] * w01
+            + b32[r1c, c0_row] * w10
+            + b32[r1c, c1_row] * w11
+        )
+
+    if workers is None:
+        workers = max(1, (os.cpu_count() or 1) // 2)
+
+    if workers <= 1 or h_t < 256:
+        _process_stripe(0, h_t)
+    else:
+        stripe = (h_t + workers - 1) // workers
+        ranges = [(i * stripe, min((i + 1) * stripe, h_t)) for i in range(workers)]
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            list(pool.map(lambda r: _process_stripe(*r), ranges))
+
+    return out
+
+
+def compute_coarse_state(
+    model: "csmapi.RasterGM",
+    grid: OutputGrid,
+    surface_radius: float,
+    step: int = 16,
+    input_n_lines: int | None = None,
+    input_n_samples: int | None = None,
+    dem_sampler: "DemRadiusSampler | None" = None,
+) -> CoarseState:
+    """Evaluate CSM on the coarse grid for a full output, no upsample.
+
+    This is the global setup step for the tiled path. Each subsequent
+    tile calls ``coordinate_map_for_window`` with the same
+    ``CoarseState``; CSM is therefore evaluated exactly once across all
+    tiles.
+    """
+    from pyproj import CRS, Transformer
+
+    h, w = grid.height, grid.width
+
+    nrows_coarse = max(2, (h - 1) // step + 2)
+    ncols_coarse = max(2, (w - 1) // step + 2)
+    rows_coarse = np.linspace(0.0, h - 1, nrows_coarse)
+    cols_coarse = np.linspace(0.0, w - 1, ncols_coarse)
+
+    cc, rr = np.meshgrid(cols_coarse, rows_coarse)
+
+    x = grid.transform.c + (cc + 0.5) * grid.transform.a
+    y = grid.transform.f + (rr + 0.5) * grid.transform.e
+
+    transformer = Transformer.from_crs(grid.crs, CRS.from_epsg(4326), always_xy=True)
+    lon_deg, lat_deg = transformer.transform(x, y)
+    lat_rad = np.deg2rad(lat_deg)
+    lon_rad = np.deg2rad(lon_deg)
+    if dem_sampler is not None:
+        radii = dem_sampler.sample_radii(lat_rad, lon_rad)
+    else:
+        radii = np.full_like(lat_rad, surface_radius)
+
+    coarse_lines, coarse_samps = ground_to_image_batch(model, lat_rad, lon_rad, radii)
+
+    return CoarseState(
+        coarse_lines=coarse_lines,
+        coarse_samps=coarse_samps,
+        grid_h=h,
+        grid_w=w,
+        input_n_lines=input_n_lines,
+        input_n_samples=input_n_samples,
+    )
+
+
+def coordinate_map_for_window(
+    state: CoarseState,
+    row0: int,
+    col0: int,
+    h_t: int,
+    w_t: int,
+) -> CoordinateMap:
+    """Build a CoordinateMap for one output tile from a global CoarseState.
+
+    Bilinear-upsamples only into the (h_t, w_t) window starting at
+    (row0, col0) in the full output, then constructs the validity mask
+    via the same chained &= logic as ``compute_transform_coarse``.
+    """
+    coords = _bilinear_upsample_pair_window(
+        state.coarse_lines,
+        state.coarse_samps,
+        state.grid_h,
+        state.grid_w,
+        row0,
+        col0,
+        h_t,
+        w_t,
+    )
+    in_lines = coords[0]
+    in_samps = coords[1]
+
+    valid = np.isfinite(in_lines)
+    valid &= np.isfinite(in_samps)
+
+    if state.input_n_lines is not None and state.input_n_samples is not None:
+        valid &= in_lines >= -0.5
+        valid &= in_lines <= state.input_n_lines - 0.5
+        valid &= in_samps >= -0.5
+        valid &= in_samps <= state.input_n_samples - 0.5
+
+    return CoordinateMap(coords=coords, valid=valid)
+
+
 def compute_transform_dense(
     model: "csmapi.RasterGM",
     grid: OutputGrid,
