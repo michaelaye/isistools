@@ -7,6 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-05-08
+
+L1 transient-peak hygiene for the csm2map memory pressure track. CTX
+B17 reproducer (12,303 × 53,095 = 653 M pixels) peak RSS drops from
+~23 GB (v0.10.1 baseline, 24 GB Mac, fits but only just) to **16.24
+GB** — ~6.76 GB recovered, ~7.76 GB margin. No public-API changes.
+HiRISE-scale outputs still exceed memory budget; the L2 tiled output
+path remains the next track.
+
+### Changed
+
+- **`CoordinateMap` storage consolidated to a single `(2, h, w)`
+  `coords` buffer.** `input_lines` and `input_samples` are now
+  zero-cost `@property` views over `coords[0]` / `coords[1]`. The
+  per-stripe `np.stack` inside `_resample_band` (one allocation per
+  worker, ~5.2 GB transient on B17 at 4 workers) becomes a plain
+  `coords[:, r0:r1]` view — no copy, no allocation.
+- **`_bilinear_upsample_pair` returns the consolidated buffer
+  directly** (was: `tuple[ndarray, ndarray]`). `compute_transform_coarse`
+  hands the buffer straight to `CoordinateMap.coords`, so there is
+  never an in-memory tuple-of-arrays form. Public API of
+  `compute_transform_coarse` / `compute_transform_dense` is unchanged.
+- **Validity-mask construction in `compute_transform_{coarse,dense}`
+  rewritten as chained `&=`** instead of `(A) & (B) & (C) & (D)`.
+  Drops the persistent `in_image` intermediate (~0.65 GB on B17) that
+  the chained form materialized until function return; transient peak
+  during construction also drops because only one bool array beyond
+  `valid` is live at any moment.
+- **Invalid-pixel fill in `_resample_band` is now in-place on the
+  common `fill_value == 0` path**: `result *= coord_map.valid` —
+  single bool-broadcast multiply, zero transient. Non-zero fills fall
+  back to `np.copyto(result, fill_value, where=~coord_map.valid)`,
+  which retains the prior ~0.65 GB bool transient but is rare.
+
+### Fixed
+
+- **Stale `CoordinateMap` field-level docstring** removed in favor of
+  a struct-level docstring describing the `(2, h, w)` layout and the
+  view semantics of `input_lines` / `input_samples`.
+
+### Tests
+
+- New `test_coordinatemap_view_semantics` asserts
+  `np.shares_memory(coord_map.input_lines, coord_map.coords)` and that
+  writes through the property show up in the underlying buffer.
+  Catches future refactors that accidentally replace views with copies
+  (which would silently reintroduce the multi-GB transient L1
+  eliminated).
+- New `test_compute_transform_dense_validity_mask` and
+  `test_compute_transform_coarse_validity_mask` monkeypatch
+  `ground_to_image_batch` to return a deterministic 3 × 3 grid with
+  one NaN, one out-of-bounds line, and one out-of-bounds sample, then
+  assert the `valid` mask correctly flags all three. Exercises the
+  chained `&=` logic end-to-end without needing a real CSM model.
+- Existing `test_resample_identity` / `test_resample_shift` updated
+  to construct `CoordinateMap(coords=, valid=)` instead of
+  `CoordinateMap(input_lines=, input_samples=, valid=)`.
+- Test count: 105 → 108 (1 skipped @slow CTX end-to-end).
+
+### Performance measurements
+
+B17 reproducer (`B17_016442_2252_XI_45N257W.IMG`,
+12,303 × 53,095 = 653 M pixels output), measured under `/usr/bin/time
+-l` on a 24 GB M-series Mac:
+
+| | Pre-L1 (v0.10.1) | Post-L1 (v0.10.2) |
+|---|---:|---:|
+| Peak RSS | ~23 GB | **16.24 GB** |
+| Peak memory footprint | n/a | 19.61 GB |
+| Wall time (full ctxpipe project) | ~82 s | 96.5 s |
+
+Wall time within ~15 % of v0.10.1 baseline; the variability is
+dominated by the 46 s `load_camera` / kernel-furnish stage rather
+than anything L1 changed. Transform stage 22.2 s, resample 19.7 s.
+
+### Notes
+
+- The plan (`Plans/csm2map-memory-l1.md`, gitignored) recommended
+  `np.where(coord_map.valid, result, fill_value, out=result)` for the
+  invalid-pixel fill; numpy 2.4's `np.where` does not accept `out=` —
+  verified before implementation. The fast-path / fallback substitute
+  preserves the plan's "zero transient on the common path" intent.
+
 ## [0.10.1] - 2026-04-24
 
 ### Fixed
@@ -759,7 +842,9 @@ for a future release.
 - Typer CLI with commands: `mosaic`, `tiepoints`, `footprints`,
   `cnet-info`.
 
-[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.10.2...HEAD
+[0.10.2]: https://github.com/michaelaye/isistools/compare/v0.10.1...v0.10.2
+[0.10.1]: https://github.com/michaelaye/isistools/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/michaelaye/isistools/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/michaelaye/isistools/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/michaelaye/isistools/compare/v0.8.0...v0.8.1
