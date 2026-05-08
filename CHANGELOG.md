@@ -7,6 +7,150 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-05-08
+
+L2 of the csm2map memory-pressure track: a tiled output path bounds
+peak memory at ``O(tile_size**2)`` regardless of total output size,
+plus an auto-dispatch heuristic in ``ctxpipe project`` that picks
+batch vs tiled based on the current machine's available RAM. Cleans
+up the structural memory bound that v0.10.1's ``lon_0`` fix and
+v0.10.2's L1 hygiene narrowed but did not eliminate. HiRISE-scale
+outputs now have a path that won't OOM on a 24 GB Mac.
+
+No public-API changes for the existing batch path. ``csm2map()`` and
+the ``csm2map`` CLI continue to behave bit-for-bit as in v0.10.2.
+Tiled support is exposed via the new ``csm2map_tiled()`` Python
+function and via ``ctxpipe project --tile-size {auto, int, none}``.
+
+### Added
+
+- **``csm2map_tiled()``** in ``src/isistools/csm2map/tiled.py``:
+  bounded-memory tiled projector. Builds the coarse CSM evaluation
+  once globally, then bilinear-upsamples only into per-tile windows
+  via a new ``_bilinear_upsample_pair_window``. Tile boundaries are
+  pixel-exact by construction — the windowed upsample's
+  coarse-to-output stride is derived from the full output dimensions,
+  so adjacent tiles agree on shared rows/cols without overlap-and-trim
+  machinery. The output GeoTIFF is opened once with the same ZSTD +
+  256-px-block profile as ``write_geotiff``; tiles are written via
+  ``rasterio.windows.Window``. Peak memory becomes
+  ``O(tile_h × tile_w × ~40 bytes)`` plus the persistent baseline
+  (input cube + camera + DEM + Python). Single-band only in v1;
+  multi-band callers should use ``csm2map()``.
+- **``CoarseState`` dataclass + ``compute_coarse_state()`` +
+  ``coordinate_map_for_window()``** in
+  ``src/isistools/csm2map/transform.py``: factor the coarse-grid CSM
+  evaluation out of ``compute_transform_coarse``. ``CoarseState``
+  holds the raw coarse-grid line/sample arrays (~170 KB at
+  CTX/B17 dimensions) plus the indexing parameters needed to
+  upsample any window.
+- **``project_tiled()``** in ``src/isistools/csm2map/tiled.py``: the
+  tile-and-write loop, extracted as a reusable inner function so
+  both ``csm2map_tiled()`` and ``ctxpipe.ctx_project()`` share the
+  same code path. Caller passes the pre-loaded input data array, a
+  ``CoarseState``, the output grid, and the tile size.
+- **``--tile-size {auto, int, none}`` flag on ``ctxpipe project``**
+  (default ``auto``). ``auto`` measures process RSS after camera +
+  input load and decides whether the batch path fits the work
+  budget; ``none`` / ``0`` forces batch; a positive int overrides
+  with an exact tile edge for benchmarking and reproducibility.
+  Auto logs its reasoning, e.g. ``"batch path fits (estimated
+  15.21 GB ≤ budget 16.60 GB)"`` or ``"auto tile: 4096 px (work
+  budget 6.20 GB / total 24 GB / persistent RSS 1.46 GB)"``.
+- **``resolve_tile_size()`` + ``_auto_tile_size()`` + ``_batch_fits()``
+  + ``_work_budget_bytes()``** dispatch helpers in ``tiled.py``.
+  Pure functions, individually testable.
+- **``psutil>=5.9``** added to ``[project.optional-dependencies]
+  csm`` group; auto-sizing is a CSM-extras-only feature.
+
+### Changed
+
+- ``ctxpipe project`` and ``ctxpipe.pipeline.ctx_project()``
+  ``ctx_edr_to_map()`` gain an optional ``tile_size`` parameter.
+  When ``tile_size`` resolves to ``None`` (the new default's
+  ``auto``-fits-batch outcome, or explicit ``"none"``/``0``/``None``),
+  the batch code path is taken byte-for-byte unchanged from v0.10.2.
+  When a positive int is resolved, the new tiled code path runs.
+
+### Auto-sizing heuristic
+
+Work budget is computed as
+``(total - persistent_rss - 3 GB OS reserve) × 0.85``. This uses
+total RAM minus the actual measured persistent baseline rather than
+``psutil.virtual_memory().available``: on macOS, ``available`` is
+conservative — it excludes compressed and cached pages and can
+under-report by 8–10 GB on idle 24 GB machines. The L1 measurement on
+B17 confirmed this directly: psutil reported ~7 GB ``available`` but
+the batch path peaked at 16.24 GB without OOM.
+
+Batch peak is estimated at ``grid_h × grid_w × 25 bytes/pixel``,
+calibrated against v0.10.2's L1 measurement (16.24 GB on 653 M
+pixels = 24.9 bytes/pixel actual; rounded up). Tile peak is
+estimated at ``tile_edge² × 40 bytes/pixel``, conservative to absorb
+interp-method variance and library-internal allocations. If the
+batch estimate fits the budget → batch (faster); else
+``tile_edge = sqrt(work_budget / 40)``, snapped to a 256-pixel
+multiple, clamped to ``[512, 16384]``.
+
+### Tests
+
+- ``tests/test_processing.py`` gains 7 new tests:
+  - ``test_bilinear_upsample_window_matches_full`` — 4 tiles tile a
+    synthetic upsample, every tile bit-identical to the
+    corresponding slice of a global upsample, including odd-sized
+    edge tiles.
+  - ``test_coordinate_map_for_window_matches_full`` —
+    monkeypatched ``ground_to_image_batch``, asserts coords + valid
+    mask are slice-identical between the global
+    ``compute_transform_coarse`` and the per-window
+    ``coordinate_map_for_window`` for 4 partitioning windows.
+    Proves pixel-exact tile-boundary correctness end-to-end.
+  - ``test_resolve_tile_size_none_forces_batch`` — ``None`` / ``0``
+    / ``"none"`` / ``"None"`` all return ``None`` (batch).
+  - ``test_resolve_tile_size_int_passthrough`` — positive int is
+    returned verbatim, no auto fall-through.
+  - ``test_resolve_tile_size_auto_falls_through_to_batch_when_tile_covers_output``
+    — small grid → batch fits → returns ``None``.
+  - ``test_resolve_tile_size_auto_returns_int_for_large_grid`` —
+    large grid → returns int multiple of 256 in ``[512, 16384]``.
+  - ``test_resolve_tile_size_invalid_raises`` — unknown strings
+    raise ``ValueError``; wrong types raise ``TypeError``.
+- Test count: 108 → 115 (1 skipped @slow CTX end-to-end). All
+  existing tests pass unchanged.
+
+### Performance measurements
+
+CTX B17 reproducer (``B17_016442_2252_XI_45N257W.IMG``,
+12,303 × 53,095 = 653 M pixels output) on a 24 GB M-series Mac:
+
+| Mode | Peak RSS | Wall time | Path chosen |
+|---|---:|---:|---|
+| ``--tile-size none`` (force batch) | 9.78 GB | 115 s | batch |
+| ``--tile-size auto`` | ~9.2 GB | varies | **batch** (auto chose) |
+| ``--tile-size 10752`` (manual tiled) | 10.64 GB | 144 s | tiled |
+
+For B17-scale outputs (~16 GB batch peak), auto correctly prefers
+batch — the single-pass path is faster than tiled because there's
+no per-tile setup, no rasterio window overhead, and a single ZSTD
+compression pass instead of 10. For HiRISE-scale outputs
+(typically several Gpx) the same heuristic will dispatch to tiled
+because the estimated batch peak exceeds the budget. Manual tiled
+override remains available via ``--tile-size <int>``.
+
+### Notes
+
+- ``csm2map()`` (the standalone CLI's batch entry point) does not
+  yet accept ``tile_size`` — wiring the auto-dispatch into the
+  standalone path is a follow-up. Most CTX usage flows through
+  ``ctxpipe project``, where auto-dispatch matters most. HiRISE
+  workflows currently use a different path (``hirisepipe`` for
+  calibration, ISIS for projection on the user's machine pending
+  a HiRISE IsisSpice driver in ALE).
+- L2 T1 was specifically scoped to **leave** ``--clip-to-footprint``,
+  ``--validate``, and ``--dense`` flags to the batch path; bringing
+  them into the tiled path would re-introduce a full ``(h, w)``
+  bool mask and defeat the memory bound.
+
 ## [0.10.2] - 2026-05-08
 
 L1 transient-peak hygiene for the csm2map memory pressure track. CTX
@@ -842,7 +986,8 @@ for a future release.
 - Typer CLI with commands: `mosaic`, `tiepoints`, `footprints`,
   `cnet-info`.
 
-[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.10.2...HEAD
+[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/michaelaye/isistools/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/michaelaye/isistools/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/michaelaye/isistools/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/michaelaye/isistools/compare/v0.9.0...v0.10.0
