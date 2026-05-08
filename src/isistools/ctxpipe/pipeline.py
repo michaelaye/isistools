@@ -103,6 +103,7 @@ def ctx_project(
     coarse_step: int = 32,
     interpolation: str = "bicubic",
     pvl_sidecar: bool = False,
+    tile_size: int | str | None = "auto",
 ) -> Path:
     """Map-project a calibrated CTX image to a GeoTIFF.
 
@@ -138,6 +139,17 @@ def ctx_project(
         Resampling: "nearest", "bilinear", or "bicubic".
     pvl_sidecar : bool
         Write ISIS-compatible PVL sidecar (default False).
+    tile_size : int | "auto" | "none" | None
+        Output-tiling control. ``"auto"`` (default) measures available
+        RAM after camera + input load and picks a tile edge that fits
+        the budget; if the chosen tile covers the full output, falls
+        through to the batch path with no tiling overhead.
+        ``"none"`` / ``0`` / ``None`` forces the batch path. Positive
+        ``int`` overrides with an exact tile edge (for benchmarking
+        or when the user knows their machine's memory better than
+        psutil reports). The tiled path bounds peak memory at
+        ~tile_size² × 40 bytes; required for HiRISE-scale outputs
+        on a 24 GB Mac.
 
     Returns
     -------
@@ -154,7 +166,8 @@ def ctx_project(
     from isistools.csm2map.grid import grid_from_map_file, grid_from_params
     from isistools.csm2map.pipeline import _derive_ground_range
     from isistools.csm2map.resample import Interpolation, resample
-    from isistools.csm2map.transform import compute_transform_coarse
+    from isistools.csm2map.tiled import project_tiled, resolve_tile_size
+    from isistools.csm2map.transform import compute_coarse_state, compute_transform_coarse
     from isistools.csm2map.writers import write_geotiff, write_mapping_pvl
 
     def _log(msg: str) -> None:
@@ -208,10 +221,52 @@ def ctx_project(
         )
     _log(f"  {grid.width}x{grid.height} pixels, {grid.resolution:.2f} m/px")
 
-    # Coordinate transform + resample
-    _log("Computing coordinate transform...")
+    interp_enum = Interpolation(interpolation)
+
+    # Decide batch vs tiled. The auto path measures process RSS after
+    # camera+input are already resident, so the budget reflects the
+    # true persistent baseline.
+    import psutil
+
+    persistent_rss = psutil.Process().memory_info().rss
+    resolved_tile = resolve_tile_size(
+        tile_size,
+        grid_h=grid.height,
+        grid_w=grid.width,
+        persistent_rss_bytes=persistent_rss,
+    )
+
+    if resolved_tile is None:
+        # Batch path — same as before
+        _log("Computing coordinate transform...")
+        t0 = time.perf_counter()
+        coord_map = compute_transform_coarse(
+            model,
+            grid,
+            mean_radius,
+            step=coarse_step,
+            input_n_lines=n_lines,
+            input_n_samples=n_samples,
+        )
+        _log(f"  Transform in {time.perf_counter() - t0:.1f}s")
+
+        _log("Resampling...")
+        t0 = time.perf_counter()
+        projected = resample(
+            calibrated, coord_map, interpolation=interp_enum, fill_value=np.nan
+        )
+        _log(f"  Resample in {time.perf_counter() - t0:.1f}s")
+
+        _log("Writing GeoTIFF...")
+        result = write_geotiff(output_path, projected, grid, nodata=0.0)
+        if pvl_sidecar:
+            write_mapping_pvl(output_path, grid, body)
+        return result
+
+    # Tiled path — bounded memory regardless of output size
+    _log(f"Building coarse state (tiled path, tile_size={resolved_tile})...")
     t0 = time.perf_counter()
-    coord_map = compute_transform_coarse(
+    state = compute_coarse_state(
         model,
         grid,
         mean_radius,
@@ -219,20 +274,22 @@ def ctx_project(
         input_n_lines=n_lines,
         input_n_samples=n_samples,
     )
-    _log(f"  Transform in {time.perf_counter() - t0:.1f}s")
+    _log(f"  Coarse state in {time.perf_counter() - t0:.1f}s")
 
-    _log("Resampling...")
+    _log("Tiled resample + write...")
     t0 = time.perf_counter()
-    interp_enum = Interpolation(interpolation)
-    projected = resample(calibrated, coord_map, interpolation=interp_enum, fill_value=np.nan)
-    _log(f"  Resample in {time.perf_counter() - t0:.1f}s")
-
-    # Write output
-    _log("Writing GeoTIFF...")
-    result = write_geotiff(output_path, projected, grid, nodata=0.0)
-    if pvl_sidecar:
-        write_mapping_pvl(output_path, grid, body)
-    return result
+    project_tiled(
+        state=state,
+        data=calibrated,
+        grid=grid,
+        body=body,
+        output_path=Path(output_path),
+        tile_size=resolved_tile,
+        interpolation=interp_enum,
+        write_pvl=pvl_sidecar,
+    )
+    _log(f"  Tiled in {time.perf_counter() - t0:.1f}s")
+    return Path(output_path)
 
 
 def ctx_edr_to_map(
@@ -249,6 +306,7 @@ def ctx_edr_to_map(
     resolution: float | None = None,
     interpolation: str = "bicubic",
     pvl_sidecar: bool = False,
+    tile_size: int | str | None = "auto",
 ) -> Path:
     """Full pipeline: PDS EDR → calibrated → map-projected GeoTIFF.
 
@@ -309,6 +367,7 @@ def ctx_edr_to_map(
         resolution=resolution,
         interpolation=interpolation,
         pvl_sidecar=pvl_sidecar,
+        tile_size=tile_size,
     )
 
 

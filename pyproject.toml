@@ -61,6 +61,7 @@ csm = [
     "scipy>=1.10",
     "pyproj>=3.4",
     "rich>=12.0",
+    "psutil>=5.9",
 ]
 dev = [
     "pytest",

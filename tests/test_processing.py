@@ -319,6 +319,66 @@ def test_coordinate_map_for_window_matches_full(monkeypatch):
         )
 
 
+def test_resolve_tile_size_none_forces_batch():
+    """``"none"`` / 0 / None all return ``None`` → batch path."""
+    from isistools.csm2map.tiled import resolve_tile_size
+
+    for spec in (None, 0, "none", "None"):
+        assert (
+            resolve_tile_size(spec, grid_h=10000, grid_w=10000, persistent_rss_bytes=10**9)
+            is None
+        )
+
+
+def test_resolve_tile_size_int_passthrough():
+    """A positive int spec is returned verbatim, no auto fall-through."""
+    from isistools.csm2map.tiled import resolve_tile_size
+
+    assert (
+        resolve_tile_size(4096, grid_h=100000, grid_w=100000, persistent_rss_bytes=10**9)
+        == 4096
+    )
+    # Even a tile larger than the output is honored — caller asked explicitly.
+    assert (
+        resolve_tile_size(20000, grid_h=10, grid_w=10, persistent_rss_bytes=10**9) == 20000
+    )
+
+
+def test_resolve_tile_size_auto_falls_through_to_batch_when_tile_covers_output():
+    """``"auto"`` returns ``None`` when the chosen tile covers the full output."""
+    from isistools.csm2map.tiled import resolve_tile_size
+
+    # Tiny grid: any sane auto tile (>= 512 px) covers it both directions.
+    result = resolve_tile_size(
+        "auto", grid_h=10, grid_w=10, persistent_rss_bytes=10**9
+    )
+    assert result is None
+
+
+def test_resolve_tile_size_auto_returns_int_for_large_grid():
+    """``"auto"`` returns an int multiple of 256 in [512, 16384] for big outputs."""
+    from isistools.csm2map.tiled import resolve_tile_size
+
+    result = resolve_tile_size(
+        "auto", grid_h=100_000, grid_w=100_000, persistent_rss_bytes=10**9
+    )
+    assert isinstance(result, int)
+    assert 512 <= result <= 16384
+    assert result % 256 == 0
+
+
+def test_resolve_tile_size_invalid_raises():
+    """Unknown strings and wrong types raise."""
+    from isistools.csm2map.tiled import resolve_tile_size
+
+    with pytest.raises(ValueError):
+        resolve_tile_size("garbage", grid_h=10, grid_w=10, persistent_rss_bytes=10**9)
+    with pytest.raises(TypeError):
+        resolve_tile_size(  # type: ignore[arg-type]
+            3.14, grid_h=10, grid_w=10, persistent_rss_bytes=10**9
+        )
+
+
 @pytest.mark.slow
 def test_ctx_end_to_end():
     """End-to-end test with real CTX data. Requires ISIS + CSM deps + data."""

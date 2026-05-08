@@ -197,6 +197,16 @@ def project(
         bool,
         typer.Option("--png", help="Write a stretched 8-bit PNG preview alongside."),
     ] = False,
+    tile_size: Annotated[
+        str,
+        typer.Option(
+            "--tile-size",
+            help="Output tiling: 'auto' (default; size by available RAM), "
+            "'none' (force batch path), or a positive integer for a fixed "
+            "tile edge in pixels. Auto falls through to batch when one "
+            "tile covers the whole output.",
+        ),
+    ] = "auto",
 ) -> None:
     """Produce a Level 2 map-projected GeoTIFF from a CTX EDR.
 
@@ -232,6 +242,7 @@ def project(
         resolution=resolution,
         interpolation=interpolation,
         pvl_sidecar=pvl_sidecar,
+        tile_size=tile_size,
     )
     typer.echo(f"Projected -> {result}")
 
