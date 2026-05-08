@@ -32,8 +32,13 @@ def _bilinear_upsample_pair(
     h: int,
     w: int,
     workers: int | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> np.ndarray:
     """Bilinearly upsample two co-aligned coarse 2D arrays onto (h, w).
+
+    Returns a single ``(2, h, w)`` float32 array. ``out[0]`` is the
+    upsample of ``coarse_a``, ``out[1]`` is ``coarse_b``. Caller can
+    pass this straight into ``CoordinateMap.coords`` — downstream slices
+    (e.g. per-stripe in resample) are then plain views, not copies.
 
     ``coarse_a`` and ``coarse_b`` must have the same shape and both
     describe a strictly uniform coarse grid spanning pixel (0, 0) to
@@ -73,9 +78,11 @@ def _bilinear_upsample_pair(
     c0_row = c0[None, :]
     c1_row = c1[None, :]
 
-    # Output arrays — allocated once, filled per stripe in workers
-    out_a = np.empty((h, w), dtype=np.float32)
-    out_b = np.empty((h, w), dtype=np.float32)
+    # Output as a single (2, h, w) buffer. out[0] / out[1] are views;
+    # downstream slicing (per-stripe in resample) avoids any np.stack.
+    out = np.empty((2, h, w), dtype=np.float32)
+    out_a = out[0]
+    out_b = out[1]
 
     def _process_stripe(r_lo: int, r_hi: int) -> None:
         r = np.arange(r_lo, r_hi, dtype=np.float32) / np.float32(step_r)
@@ -119,20 +126,36 @@ def _bilinear_upsample_pair(
         with ThreadPoolExecutor(max_workers=workers) as pool:
             list(pool.map(lambda r: _process_stripe(*r), ranges))
 
-    return out_a, out_b
+    return out
 
 
 @dataclass
 class CoordinateMap:
-    """Dense mapping from output pixel coords to input pixel coords."""
+    """Dense mapping from output pixel coords to input pixel coords.
 
-    input_lines: np.ndarray  # shape (height, width), float32
-    input_samples: np.ndarray  # shape (height, width), float32
+    ``coords[0]`` holds input-line values, ``coords[1]`` holds
+    input-sample values, both ``(h, w)`` float32. Storing them as one
+    contiguous ``(2, h, w)`` buffer lets per-stripe consumers (the
+    resampler) slice with ``coords[:, r0:r1]`` — a view, no copy —
+    instead of stacking them per worker. ``input_lines`` and
+    ``input_samples`` remain available as zero-cost property views for
+    callers that only need one channel.
+    """
+
+    coords: np.ndarray  # shape (2, height, width)
     valid: np.ndarray  # shape (height, width), bool
 
     @property
+    def input_lines(self) -> np.ndarray:
+        return self.coords[0]
+
+    @property
+    def input_samples(self) -> np.ndarray:
+        return self.coords[1]
+
+    @property
     def shape(self) -> tuple[int, int]:
-        return self.input_lines.shape
+        return self.coords.shape[1:]
 
 
 def compute_transform_dense(
@@ -175,22 +198,21 @@ def compute_transform_dense(
 
     in_lines, in_samps = ground_to_image_batch(model, lat_rad, lon_rad, radii)
 
-    valid = np.isfinite(in_lines) & np.isfinite(in_samps)
+    # Build validity in place via chained &= so the (h,w) bool
+    # intermediates from the bounds check don't co-exist.
+    valid = np.isfinite(in_lines)
+    valid &= np.isfinite(in_samps)
 
     if input_n_lines is not None and input_n_samples is not None:
-        in_image = (
-            (in_lines >= -0.5)
-            & (in_lines <= input_n_lines - 0.5)
-            & (in_samps >= -0.5)
-            & (in_samps <= input_n_samples - 0.5)
-        )
-        valid &= in_image
+        valid &= in_lines >= -0.5
+        valid &= in_lines <= input_n_lines - 0.5
+        valid &= in_samps >= -0.5
+        valid &= in_samps <= input_n_samples - 0.5
 
-    return CoordinateMap(
-        input_lines=in_lines,
-        input_samples=in_samps,
-        valid=valid,
-    )
+    coords = np.empty((2, *in_lines.shape), dtype=in_lines.dtype)
+    coords[0] = in_lines
+    coords[1] = in_samps
+    return CoordinateMap(coords=coords, valid=valid)
 
 
 def compute_transform_coarse(
@@ -270,27 +292,26 @@ def compute_transform_coarse(
     # AFTER interpolation.
 
     # Upsample the coarse line/sample arrays to the full (h, w) grid
-    # via a single shared-weight pass. See _bilinear_upsample_pair for
-    # the memory-bandwidth reasoning.
-    in_lines, in_samps = _bilinear_upsample_pair(coarse_lines, coarse_samps, h, w)
+    # via a single shared-weight pass. Returns a single (2, h, w) buffer
+    # so per-stripe consumers can slice with no copy. See
+    # _bilinear_upsample_pair for the memory-bandwidth reasoning.
+    coords = _bilinear_upsample_pair(coarse_lines, coarse_samps, h, w)
+    in_lines = coords[0]
+    in_samps = coords[1]
 
-    valid = np.isfinite(in_lines) & np.isfinite(in_samps)
+    # Build validity in place via chained &= so the (h,w) bool
+    # intermediates from the bounds check don't co-exist.
+    valid = np.isfinite(in_lines)
+    valid &= np.isfinite(in_samps)
 
     # Per-pixel bounds check against the input image extent.
     if input_n_lines is not None and input_n_samples is not None:
-        in_image = (
-            (in_lines >= -0.5)
-            & (in_lines <= input_n_lines - 0.5)
-            & (in_samps >= -0.5)
-            & (in_samps <= input_n_samples - 0.5)
-        )
-        valid &= in_image
+        valid &= in_lines >= -0.5
+        valid &= in_lines <= input_n_lines - 0.5
+        valid &= in_samps >= -0.5
+        valid &= in_samps <= input_n_samples - 0.5
 
-    return CoordinateMap(
-        input_lines=in_lines,
-        input_samples=in_samps,
-        valid=valid,
-    )
+    return CoordinateMap(coords=coords, valid=valid)
 
 
 def validate_coarse_vs_dense(

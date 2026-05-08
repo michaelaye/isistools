@@ -114,13 +114,13 @@ def _resample_band(
     # negligible. For outputs below ~1 M pixels a single-threaded path
     # is faster than any threading overhead.
     if workers <= 1 or h * w < 1_048_576:
-        coordinates = np.stack(
-            (coord_map.input_lines, coord_map.input_samples),
-            axis=0,
-        ).astype(np.float32, copy=False)
+        # coord_map.coords is already a (2, h, w) float32 buffer in
+        # production (coarse path). For the rare float64 case
+        # (validation, tests) scipy's C code accepts both — let it
+        # decide rather than allocating a fresh stack.
         result = map_coordinates(
             band_data,
-            coordinates,
+            coord_map.coords,
             order=order,
             mode="constant",
             cval=fill_value,
@@ -140,13 +140,10 @@ def _resample_band(
             r1 = min(r0 + stripe, h)
             if r0 >= r1:
                 return
-            coordinates = np.stack(
-                (
-                    coord_map.input_lines[r0:r1],
-                    coord_map.input_samples[r0:r1],
-                ),
-                axis=0,
-            ).astype(np.float32, copy=False)
+            # View into the consolidated (2, h, w) buffer — no copy,
+            # no allocation. Each stripe sees its own row band of both
+            # channels.
+            coordinates = coord_map.coords[:, r0:r1]
             map_coordinates(
                 band_data,
                 coordinates,
@@ -159,7 +156,13 @@ def _resample_band(
         with ThreadPoolExecutor(max_workers=workers) as pool:
             list(pool.map(_process_stripe, range(workers)))
 
-    # Apply validity mask
-    result[~coord_map.valid] = fill_value
+    # Apply validity mask. The fast path handles the common
+    # ``fill_value == 0`` case with a single in-place multiply
+    # (bool broadcast as 0/1), which has zero transient. The fallback
+    # accepts a one-shot ~(h,w) bool transient for non-zero fills.
+    if fill_value == 0:
+        result *= coord_map.valid
+    else:
+        np.copyto(result, fill_value, where=~coord_map.valid)
 
     return result
