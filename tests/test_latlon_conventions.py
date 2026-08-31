@@ -273,14 +273,22 @@ class TestGridFromMapFileConventions:
         with pytest.warns(UserWarning, match="LatitudeType='Planetographic'"):
             grid_pg = grid_from_map_file(map_pg)
 
-        # After conversion, the internal lat_min / lat_max must match.
+        # After conversion, the internal lat_min / lat_max must match. This is
+        # what the test exists to lock in: if we were off by the ~0.33° Mars
+        # planetographic/centric shift, these would differ by ~3%.
         assert grid_pg.lat_min == pytest.approx(grid_pc.lat_min, abs=1e-9)
         assert grid_pg.lat_max == pytest.approx(grid_pc.lat_max, abs=1e-9)
-        # And the grid dimensions must match to the pixel — if we were
-        # off by the ~0.33° Mars planetographic/centric shift, the row
-        # count would differ by ~3% at these latitudes.
-        assert grid_pg.height == grid_pc.height
-        assert grid_pg.width == grid_pc.width
+
+        # The grid *dimensions* no longer have to match, and deliberately do not.
+        # Since the ocentric/ographic figure fix the two MAP files build
+        # different CRSs — sphere for planetocentric, ellipsoid for
+        # planetographic — and PROJ >= 9.8 makes even ``eqc`` honour flattening,
+        # so the same latitude span covers a different number of metres.
+        # Asserting the figure instead is the check that has teeth; whether the
+        # planetographic path should converge on the sphere is open in
+        # michaelaye/isistools#5.
+        assert grid_pc.crs.ellipsoid.semi_minor_metre == pytest.approx(MARS_EQ)
+        assert grid_pg.crs.ellipsoid.semi_minor_metre == pytest.approx(MARS_POLAR)
 
     def test_positive_west_vs_positive_east_produce_same_grid(self, tmp_path):
         """Longitude convention flip: PositiveWest → PositiveEast must

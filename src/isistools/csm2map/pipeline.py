@@ -16,6 +16,7 @@ from isistools.csm2map.camera import (
 )
 from isistools.csm2map.dem import DemRadiusSampler, resolve_shape_model
 from isistools.csm2map.grid import OutputGrid, grid_from_map_file, grid_from_params
+from isistools.csm2map.projections import body_figure_params
 from isistools.csm2map.resample import Interpolation, resample
 from isistools.csm2map.transform import (
     compute_transform_coarse,
@@ -381,10 +382,19 @@ def _build_grid(
         # projection from the camera model.
         center_lat = (lat_range[0] + lat_range[1]) / 2.0
         center_lon = (lon_range[0] + lon_range[1]) / 2.0
+        # The sphere, not the ellipsoid: these bounds come from the camera
+        # model, which reports planetocentric latitudes, and ISIS computes
+        # Equirectangular spherically. See body_figure_params.
+        figure = " ".join(
+            body_figure_params(
+                body.radius_equatorial_m,
+                body.radius_polar_m,
+                projection="Equirectangular",
+            )
+        )
         projection = (
             f"+proj=eqc +lat_ts={center_lat} +lon_0={center_lon} "
-            f"+a={body.radius_equatorial_m} +b={body.radius_polar_m} "
-            f"+units=m +no_defs +type=crs"
+            f"{figure} +units=m +no_defs +type=crs"
         )
 
     if resolution is None:

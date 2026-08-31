@@ -431,23 +431,35 @@ def _auto_projection(
     ``compute_transform_coarse`` allocate the transform arrays on a
     4 billion-pixel grid.
     """
+    from isistools.csm2map.projections import body_figure_params
+
     center_lat = (lat_range[0] + lat_range[1]) / 2.0
     center_lon = (lon_range[0] + lon_range[1]) / 2.0
 
-    a = body.radius_equatorial_m
-    b = body.radius_polar_m
+    # The figure differs per branch, because ISIS does: Sinusoidal is spherical
+    # there, PolarStereographic is ellipsoidal (measured exactly against ISIS —
+    # see body_figure_params). Both branches honour flattening in PROJ, so
+    # picking the wrong one is a real geometric error: -1.174 % along-track for
+    # sinusoidal, +0.59 % (~2.9 km at 81.8 deg S) for polar stereographic.
+    def figure(projection: str) -> str:
+        return " ".join(
+            body_figure_params(
+                body.radius_equatorial_m, body.radius_polar_m, projection=projection
+            )
+        )
 
     if abs(center_lat) >= 70:
-        # Polar Stereographic
+        # Polar Stereographic — ellipsoidal in ISIS
         lat_0 = 90.0 if center_lat > 0 else -90.0
         return (
             f"+proj=stere +lat_0={lat_0} +lon_0={center_lon} "
-            f"+a={a} +b={b} +units=m +no_defs +type=crs"
+            f"{figure('PolarStereographic')} +units=m +no_defs +type=crs"
         )
     else:
-        # Sinusoidal (ISIS default)
+        # Sinusoidal (ISIS default) — spherical in ISIS
         return (
-            f"+proj=sinu +lon_0={center_lon} +a={a} +b={b} +units=m +no_defs +type=crs"
+            f"+proj=sinu +lon_0={center_lon} "
+            f"{figure('Sinusoidal')} +units=m +no_defs +type=crs"
         )
 
 

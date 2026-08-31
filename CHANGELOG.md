@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Projected CRS no longer pairs planetocentric latitudes with the ographic
+  ellipsoid** (#4). Every CRS csm2map built emitted
+  ``+a=EquatorialRadius +b=PolarRadius`` — the ographic ellipsoid — while the
+  latitudes being projected were planetocentric, either straight from the camera
+  model or converted to planetocentric by ``grid_from_map_file``. PROJ then
+  applied the ellipsoidal meridional scaling to latitudes that were never
+  ographic. On Mars that is a fixed ``1 - e² = -1.174 %`` along-track error in
+  any projection that honours flattening. Measured against ISIS ``cam2map``
+  across five CTX cubes spanning 7 168 to 52 224 lines: **-1.1709 %, sd
+  0.0107** in Sinusoidal, reaching **3.7 km** on a full-length strip.
+
+  It was also a datum-labelling error: planetocentric Mars is
+  ``IAU_2015:49900`` (*Mars (2015) - Sphere / Ocentric*, ``f = 0``), while
+  ``+a``/``+b`` describes ``49901``, the ographic ellipsoid.
+
+  New ``body_figure_params()`` and ``is_planetocentric()`` in
+  ``csm2map/projections.py`` select the figure of the body from **both** the
+  latitude convention and the projection, using the same latitude test and the
+  same "absent means planetocentric" default as ``grid_from_map_file``. Applied
+  at all four emitting sites: ``mapping_to_crs``, ``csm2map/pipeline.py``,
+  ``csm2map/tiled.py``, and ``ctxpipe/pipeline.py``'s ``_auto_projection``.
+
+  **ISIS is not uniformly spherical**, so the figure has to be per-projection.
+  Measured by projecting a cube with ``cam2map`` and probing with ``mappt``:
+
+  | ISIS projection | model | verified |
+  |---|---|---|
+  | Sinusoidal | sphere x latitude as declared | exact |
+  | Equirectangular | sphere x latitude as declared | exact |
+  | Mercator | sphere x ocentric | 0.6 m on 23.7 km |
+  | PolarStereographic | **ellipsoid x ographic** | exact |
+
+  PolarStereographic therefore keeps ``+a``/``+b``; getting it wrong costs
+  **+0.59 % (~2.9 km) at 81.8 deg S**, and it is what ``ctxpipe project``
+  selects above |lat| 70. Projections not in that table keep the historical
+  ``+a``/``+b`` — do not widen the spherical set without measuring first.
+  This matches DOI-USGS/ISIS3#5325, whose "*some* projections in ISIS ... assume
+  a spherical body" is precise.
+
+  **Equirectangular is affected too, and version-dependently.** PROJ **9.7.1**
+  returned ``A*rad(lat)`` for both ``+R`` and ``+a``/``+b`` — ``eqc`` was
+  spherical-only. PROJ **9.8.1** returns the true meridian arc for ``+a``/``+b``.
+  So an equirectangular product carrying an ellipsoid it did not mean shifts by
+  ``1 - e²`` on a PROJ upgrade, silently. Pinning the planetocentric path to the
+  sphere makes the output version-independent, which is the real guarantee here.
+
+  Regression coverage in ``tests/test_body_figure.py``: the Sinusoidal case is
+  asserted against ``A·rad(lat)`` and separately asserted *not* to match
+  ``A(1-e²)·rad(lat)``, with the residual pinned to ``-e²``, so a silent revert
+  fails loudly.
+
+  Known remaining gap: ``grid_from_map_file`` converts planetographic bounds to
+  planetocentric and then still projects them with an ellipsoidal CRS. That is
+  arguably the same bug class, but is unmeasured and left unchanged here.
+
 ## [0.11.0] - 2026-05-08
 
 L2 of the csm2map memory-pressure track: a tiled output path bounds

@@ -44,6 +44,87 @@ ISIS_TO_PROJ4 = {
 }
 
 
+def is_planetocentric(lat_type: str | None) -> bool:
+    """True when ``lat_type`` names the planetocentric convention.
+
+    Mirrors the test in :func:`isistools.csm2map.grid.grid_from_map_file`, and
+    uses the same default: an absent ``LatitudeType`` means planetocentric.
+    """
+    return str(lat_type if lat_type is not None else "Planetocentric").strip().lower() in (
+        "planetocentric",
+        "centric",
+    )
+
+
+# Which figure of the body ISIS actually projects on, per projection.
+#
+# ISIS is NOT uniformly spherical — see DOI-USGS/ISIS3#5325, whose wording ("*some*
+# projections in ISIS ... assume a spherical body") is precise. Measured against
+# ISIS by projecting a cube and probing the result with ``mappt``:
+#
+#   Sinusoidal          sphere x latitude as declared    exact
+#   Equirectangular     sphere x latitude as declared    exact
+#   Mercator            sphere x ocentric                0.6 m on 23.7 km
+#   PolarStereographic  ELLIPSOID x ographic             exact, to the millimetre
+#
+# Getting PolarStereographic wrong costs +0.59 % (~2.9 km) at 81.8 deg S, and it is
+# the projection ``ctxpipe._auto_projection`` selects above |lat| 70.
+_ISIS_SPHERICAL_PROJECTIONS = frozenset(
+    {"equirectangular", "simplecylindrical", "sinusoidal", "mercator"}
+)
+_ISIS_ELLIPSOIDAL_PROJECTIONS = frozenset({"polarstereographic"})
+
+
+def body_figure_params(
+    eq_radius_m: float,
+    pol_radius_m: float,
+    lat_type: str | None = "Planetocentric",
+    projection: str | None = None,
+) -> list[str]:
+    """PROJ figure-of-the-body parameters for an ISIS projection.
+
+    The figure depends on **both** the latitude convention and the projection,
+    because ISIS implements some projections on a sphere and others on the
+    ellipsoid (see ``_ISIS_SPHERICAL_PROJECTIONS`` above).
+
+    * A projection ISIS computes **spherically**, with planetocentric latitudes,
+      gets ``["+R=<eq_radius>"]``. Emitting ``+a``/``+b`` here would make PROJ
+      apply ellipsoidal meridional scaling to latitudes that were never ographic
+      — a fixed ``1 - e² = -1.174 %`` on Mars in any projection honouring
+      flattening, invisible in Equirectangular only because PROJ's ``eqc``
+      ignores it. It also mislabels the datum: planetocentric Mars is
+      ``IAU_2015:49900`` (sphere, ``f = 0``), not ``49901``.
+    * A projection ISIS computes on the **ellipsoid** keeps ``+a``/``+b``
+      regardless of the declared latitude type, since ISIS converts to ographic
+      itself before projecting.
+    * An **unverified** projection keeps ``+a``/``+b`` — the historical
+      behaviour. Do not widen this without measuring against ISIS first.
+
+    Parameters
+    ----------
+    eq_radius_m, pol_radius_m : float
+        Body semi-major and semi-minor radii in metres.
+    lat_type : str, optional
+        ISIS ``LatitudeType``. ``None`` is treated as planetocentric.
+    projection : str, optional
+        ISIS ``ProjectionName``. ``None`` means "caller knows it is one of the
+        spherical ones", which is what the camera-derived paths use.
+
+    Returns
+    -------
+    list of str
+        PROJ parameter fragments, ready to join into a proj4 string.
+    """
+    ellipsoid = [f"+a={eq_radius_m}", f"+b={pol_radius_m}"]
+    if projection is not None:
+        key = str(projection).strip().lower()
+        if key in _ISIS_ELLIPSOIDAL_PROJECTIONS:
+            return ellipsoid
+        if key not in _ISIS_SPHERICAL_PROJECTIONS:
+            return ellipsoid
+    return [f"+R={eq_radius_m}"] if is_planetocentric(lat_type) else ellipsoid
+
+
 def mapping_to_crs(mapping: dict) -> CRS:
     """Convert an ISIS Mapping group dict to a pyproj CRS.
 
@@ -97,8 +178,9 @@ def mapping_to_crs(mapping: dict) -> CRS:
         f"+proj={proj4_id}",
         f"+lon_0={center_lon}",
         f"+lat_ts={center_lat}" if proj4_id == "eqc" else f"+lat_0={center_lat}",
-        f"+a={eq_radius}",
-        f"+b={pol_radius}",
+        *body_figure_params(
+            eq_radius, pol_radius, mapping.get("LatitudeType"), proj_name
+        ),
         "+units=m",
         "+no_defs",
         "+type=crs",
