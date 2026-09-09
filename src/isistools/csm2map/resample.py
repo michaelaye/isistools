@@ -12,9 +12,14 @@ from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 
 import numpy as np
-from scipy.ndimage import map_coordinates
+from scipy.ndimage import binary_dilation, map_coordinates
 
 from isistools.csm2map.transform import CoordinateMap
+
+# Half-width, in input pixels, of the neighbourhood a spline of the given order
+# draws on. Used to grow the special-pixel mask so every output pixel whose
+# interpolation window touched a special pixel is marked invalid.
+_SPLINE_RADIUS = {2: 2, 3: 2, 4: 3, 5: 3}
 
 
 class Interpolation(str, Enum):
@@ -104,6 +109,28 @@ def _resample_band(
     if band_data.dtype != np.float32:
         band_data = band_data.astype(np.float32, copy=False)
 
+    # ISIS special pixels reach us as NaN (read_isis_cube_raw converts them).
+    # For order >= 2 scipy prefilters with a *recursive* spline filter, and that
+    # filter is IIR: a single NaN anywhere propagates across the entire array,
+    # so one NULL pixel turns the whole output into NaN and csm2map writes an
+    # all-nodata raster while still reporting a healthy valid-pixel count.
+    #
+    # Substitute a finite value for the interpolation, then mark every output
+    # pixel whose interpolation window touched a special pixel as invalid. That
+    # reproduces ISIS's NULL propagation instead of losing the image.
+    #
+    # Orders 0 and 1 need none of this: they have no prefilter, so a NaN only
+    # affects its immediate neighbours, which is already the desired behaviour.
+    special = None
+    if order >= 2:
+        special = np.isnan(band_data)
+        if special.any():
+            # In place, then restored below: a float32 copy of a full CTX cube
+            # is ~800 MB and this stage already runs near the memory ceiling.
+            np.copyto(band_data, np.float32(0), where=special)
+        else:
+            special = None
+
     if workers is None:
         # One thread per physical core is close to optimal; using every
         # logical core (HT) gives no extra win and starts hurting memory
@@ -156,6 +183,11 @@ def _resample_band(
         with ThreadPoolExecutor(max_workers=workers) as pool:
             list(pool.map(_process_stripe, range(workers)))
 
+    if special is not None:
+        _mask_special_pixels(result, special, coord_map, order, fill_value, workers)
+        # Leave the caller's array as we found it.
+        np.copyto(band_data, np.float32(np.nan), where=special)
+
     # Apply validity mask. The fast path handles the common
     # ``fill_value == 0`` case with a single in-place multiply
     # (bool broadcast as 0/1), which has zero transient. The fallback
@@ -166,3 +198,47 @@ def _resample_band(
         np.copyto(result, fill_value, where=~coord_map.valid)
 
     return result
+
+
+def _mask_special_pixels(
+    result: np.ndarray,
+    special: np.ndarray,
+    coord_map: CoordinateMap,
+    order: int,
+    fill_value: float,
+    workers: int,
+) -> None:
+    """Set output pixels whose interpolation window touched a special pixel to fill.
+
+    Grows the special-pixel mask by the spline's radius in *input* space, then
+    samples it with order 0. Nearest-neighbour needs no prefilter and no
+    float-size copy of the input, so the whole check costs one extra bool array
+    rather than one extra float32 array.
+
+    Operates on ``result`` in place.
+    """
+    grown = binary_dilation(special, iterations=_SPLINE_RADIUS.get(order, 2))
+    grown_u8 = grown.view(np.uint8)
+    h = coord_map.shape[0]
+    n = max(1, workers)
+    stripe = (h + n - 1) // n
+
+    def _do(i: int) -> None:
+        r0 = i * stripe
+        r1 = min(r0 + stripe, h)
+        if r0 >= r1:
+            return
+        touched = map_coordinates(
+            grown_u8,
+            coord_map.coords[:, r0:r1],
+            order=0,
+            mode="constant",
+            cval=0,
+        )
+        np.copyto(result[r0:r1], fill_value, where=touched.astype(bool))
+
+    if n == 1:
+        _do(0)
+    else:
+        with ThreadPoolExecutor(max_workers=n) as pool:
+            list(pool.map(_do, range(n)))

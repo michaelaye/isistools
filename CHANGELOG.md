@@ -64,6 +64,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   planetocentric and then still projects them with an ellipsoidal CRS. That is
   arguably the same bug class, but is unmeasured and left unchanged here.
 
+- **One ISIS special pixel no longer empties the whole projected raster.**
+  ``read_isis_cube_raw`` converts ISIS special pixels to ``NaN``, and the
+  bicubic resample path calls ``scipy.ndimage.map_coordinates`` with
+  ``order=3``. That order prefilters with a *recursive* spline filter, which is
+  IIR: a single ``NaN`` anywhere propagates across the entire array. Any cube
+  containing so much as one NULL pixel therefore projected to an all-nodata
+  GeoTIFF — while csm2map still reported a healthy valid-pixel count and exited
+  0, so the loss was silent.
+
+  Measured on MC20W: 8 of 163 delivered CTX products were entirely empty. The
+  eight broken cubes carried two NULL columns each (~0.08 % of their pixels);
+  every one of the 155 good cubes had exactly zero special pixels. Sample count,
+  longitude and the narrow-swath coarse step were all ruled out — 2512-sample
+  cubes appear in both groups.
+
+  ``_resample_band`` now substitutes a finite value for the NaNs before
+  interpolating, then masks every output pixel whose interpolation window
+  touched a special pixel, reproducing ISIS's NULL propagation instead of losing
+  the image. The mask is grown by the spline radius in input space and sampled
+  with order 0, so the check costs one bool array rather than a second float32
+  one, and the substitution is done in place and restored — a float32 copy of a
+  full CTX cube is ~800 MB and this stage already runs near the memory ceiling.
+  Orders 0 and 1 are untouched: they have no prefilter, so a NaN affects only
+  its immediate neighbours, which is already correct.
+
 ## [0.11.0] - 2026-05-08
 
 L2 of the csm2map memory-pressure track: a tiled output path bounds

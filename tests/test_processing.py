@@ -48,6 +48,56 @@ def test_resample_identity():
     np.testing.assert_array_almost_equal(result, input_data, decimal=5)
 
 
+def test_resample_bicubic_survives_one_special_pixel():
+    """A single ISIS special pixel must not wipe out the whole bicubic output.
+
+    Regression: scipy's order>=2 prefilter is a recursive (IIR) spline filter,
+    so one NaN propagates across the entire array. That silently turned real
+    CTX products into all-nodata rasters while csm2map still reported a healthy
+    valid-pixel count. Only the neighbourhood of the special pixel may be lost.
+    """
+    from isistools.csm2map.resample import Interpolation, resample
+    from isistools.csm2map.transform import CoordinateMap
+
+    input_data = np.full((40, 40), 7.0, dtype=np.float32)
+    input_data[0, 0] = np.nan  # one NULL, in the corner
+
+    rows, cols = np.meshgrid(np.arange(40), np.arange(40), indexing="ij")
+    coords = np.stack((rows.astype(np.float64), cols.astype(np.float64)), axis=0)
+    coord_map = CoordinateMap(coords=coords, valid=np.ones((40, 40), dtype=bool))
+
+    result = resample(
+        input_data,
+        coord_map,
+        interpolation=Interpolation.BICUBIC,
+        fill_value=np.nan,
+    )
+
+    finite = np.isfinite(result)
+    assert finite.mean() > 0.95, f"only {finite.mean():.1%} finite — NaN propagated"
+    np.testing.assert_array_almost_equal(result[10:, 10:], 7.0, decimal=3)
+    # The special pixel itself must still be rejected, not silently filled.
+    assert not finite[0, 0]
+    # The caller's array is left as it was found.
+    assert np.isnan(input_data[0, 0])
+
+
+def test_resample_bicubic_clean_array_unchanged():
+    """With no special pixels the bicubic path must behave exactly as before."""
+    from isistools.csm2map.resample import Interpolation, resample
+    from isistools.csm2map.transform import CoordinateMap
+
+    rng = np.random.default_rng(0)
+    input_data = rng.random((30, 30), dtype=np.float32) * 100.0
+
+    rows, cols = np.meshgrid(np.arange(30), np.arange(30), indexing="ij")
+    coords = np.stack((rows.astype(np.float64), cols.astype(np.float64)), axis=0)
+    coord_map = CoordinateMap(coords=coords, valid=np.ones((30, 30), dtype=bool))
+
+    result = resample(input_data, coord_map, interpolation=Interpolation.BICUBIC)
+    np.testing.assert_array_almost_equal(result, input_data, decimal=3)
+
+
 def test_resample_shift():
     """Test resampling with a half-pixel shift."""
     from isistools.csm2map.resample import Interpolation, resample
