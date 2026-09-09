@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-09
+
+Correctness release for csm2map geodesy. Three fixes that changed projected
+output: the figure of the body now follows the projection and latitude type,
+the PVL sidecar describes the same figure as the GeoTIFF beside it, and a
+single ISIS special pixel no longer empties an entire raster. Products built
+with earlier versions differ from these by up to 1.17 % along-track.
+
 ### Fixed
 
 - **The Mapping PVL sidecar now describes the same figure of the body as the
@@ -1088,7 +1096,8 @@ for a future release.
 - Typer CLI with commands: `mosaic`, `tiepoints`, `footprints`,
   `cnet-info`.
 
-[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/michaelaye/isistools/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/michaelaye/isistools/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/michaelaye/isistools/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/michaelaye/isistools/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/michaelaye/isistools/compare/v0.10.0...v0.10.1
