@@ -126,6 +126,10 @@ def write_mapping_pvl(
     a PVL Mapping group — e.g. ``automos``, ``mapmos``, or scripts that
     parse ``catlab`` output.
 
+    ``EquatorialRadius``/``PolarRadius`` are read from ``grid.crs``, so the
+    sidecar always describes the same figure of the body as the GeoTIFF it sits
+    beside. ``body`` supplies only ``TargetName``.
+
     Parameters
     ----------
     output_path : Path
@@ -161,6 +165,25 @@ def write_mapping_pvl(
     else:
         isis_proj_name = "Unknown"
 
+    # The radii must describe the figure the data was actually projected on,
+    # which is the output CRS's ellipsoid — not the body's kernel radii.
+    # ``body_figure_params`` picks that figure from the projection and the
+    # latitude convention, so for a planetocentric Equirectangular product the
+    # CRS is a *sphere* (IAU_2015:49900, f = 0, semi-minor 3396190) while
+    # ``body.radius_polar_m`` is 3376200 — 49901, the ographic ellipsoid.
+    # Emitting the kernel values handed anyone reading the sidecar a semi-minor
+    # axis 20 km from the file's own datum: the exact 49900/49901 confusion,
+    # and worst precisely when a reader has degraded the CRS to None and is
+    # consulting the sidecar to disambiguate.
+    ellipsoid = grid.crs.ellipsoid
+    eq_radius_m = body.radius_equatorial_m
+    pol_radius_m = body.radius_polar_m
+    if ellipsoid is not None:
+        if ellipsoid.semi_major_metre is not None:
+            eq_radius_m = ellipsoid.semi_major_metre
+        if ellipsoid.semi_minor_metre is not None:
+            pol_radius_m = ellipsoid.semi_minor_metre
+
     pvl_path = output_path.with_suffix(".pvl")
 
     # Normalize longitudes to the declared domain [0, 360) so the PVL
@@ -177,8 +200,8 @@ def write_mapping_pvl(
         "Group = Mapping",
         f"  ProjectionName     = {isis_proj_name}",
         f"  TargetName         = {body.name}",
-        f"  EquatorialRadius   = {body.radius_equatorial_m:.1f} <meters>",
-        f"  PolarRadius        = {body.radius_polar_m:.1f} <meters>",
+        f"  EquatorialRadius   = {eq_radius_m:.1f} <meters>",
+        f"  PolarRadius        = {pol_radius_m:.1f} <meters>",
         "  LatitudeType       = Planetocentric",
         "  LongitudeDirection = PositiveEast",
         "  LongitudeDomain    = 360",

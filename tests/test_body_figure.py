@@ -192,3 +192,72 @@ class TestGeometricConsequence:
         """
         centric = self._y(mapping_to_crs(_mapping("Equirectangular")), self.LAT)
         assert centric == pytest.approx(A * math.radians(self.LAT), rel=1e-9)
+
+
+class TestMappingPvlSidecar:
+    """The sidecar must describe the same figure of the body as the GeoTIFF.
+
+    ``write_mapping_pvl`` used to emit the *kernel* radii (``body.radius_*_m``)
+    regardless of the CRS the data was projected with. After the figure fix, a
+    planetocentric Equirectangular product sits on the 49900 sphere, so the
+    sidecar was claiming ``PolarRadius = 3376200`` — 49901's ographic
+    semi-minor, 20 km from the file's own datum.
+
+    That mattered most exactly where the sidecar is most likely to be consulted:
+    when a reader has degraded the GeoTIFF's CRS to ``None`` (WKT1 has no slot
+    for the IAU edition) and someone reaches for the plain-text file to
+    disambiguate 49900 from 49901.
+    """
+
+    @staticmethod
+    def _body():
+        from isistools.csm2map.camera import TargetBody
+
+        return TargetBody(
+            name="MARS",
+            naif_id=499,
+            radius_equatorial_m=A,
+            radius_polar_m=B,  # the kernel ellipsoid the writer used to emit
+            radius_mean_m=(2.0 * A + B) / 3.0,
+        )
+
+    @staticmethod
+    def _grid(crs):
+        from isistools.csm2map.grid import grid_from_params
+
+        return grid_from_params(
+            crs=crs, resolution=5.0,
+            lat_min=-1.0, lat_max=1.0, lon_min=-1.0, lon_max=1.0,
+        )
+
+    @staticmethod
+    def _read(pvl_path):
+        out = {}
+        for line in pvl_path.read_text().splitlines():
+            if "=" in line:
+                k, _, v = line.partition("=")
+                out[k.strip()] = v.strip().split("<")[0].strip()
+        return out
+
+    def test_spherical_crs_yields_spherical_radii(self, tmp_path):
+        from isistools.csm2map.writers import write_mapping_pvl
+
+        crs = CRS.from_user_input("IAU_2015:49910")  # sphere / ocentric / eqc
+        p = write_mapping_pvl(tmp_path / "x.tif", self._grid(crs), self._body())
+        got = self._read(p)
+        assert float(got["EquatorialRadius"]) == pytest.approx(A)
+        # The regression: this used to be B (3376200), the ographic semi-minor.
+        assert float(got["PolarRadius"]) == pytest.approx(A)
+
+    def test_sidecar_agrees_with_the_crs_it_sits_beside(self, tmp_path):
+        """Holds for the ellipsoidal case too — the sidecar follows the CRS."""
+        from isistools.csm2map.writers import write_mapping_pvl
+
+        for crs in (CRS.from_user_input("IAU_2015:49910"),
+                    CRS.from_proj4(f"+proj=eqc +a={A} +b={B} +no_defs +type=crs")):
+            p = write_mapping_pvl(tmp_path / "y.tif", self._grid(crs), self._body())
+            got = self._read(p)
+            assert float(got["EquatorialRadius"]) == pytest.approx(
+                crs.ellipsoid.semi_major_metre)
+            assert float(got["PolarRadius"]) == pytest.approx(
+                crs.ellipsoid.semi_minor_metre)

@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Mapping PVL sidecar now describes the same figure of the body as the
+  GeoTIFF it sits beside.** ``write_mapping_pvl`` emitted the *kernel* radii
+  (``body.radius_equatorial_m`` / ``radius_polar_m``) regardless of the CRS the
+  data was projected with — the one CRS-emitting site the figure fix below did
+  not reach. So a planetocentric Equirectangular product, correctly projected on
+  ``IAU_2015:49900`` (the sphere, semi-minor 3396190), shipped a sidecar
+  claiming ``PolarRadius = 3376200`` — ``49901``'s ographic semi-minor, **20 km
+  from the file's own datum**.
+
+  That is worst precisely where the sidecar is most likely to be consulted:
+  WKT1 has no slot for the IAU edition, so readers that go through it (rasterio,
+  among others) report the CRS as unidentified, and the plain-text sidecar is
+  what someone reaches for to tell 49900 from 49901. It answered wrong.
+
+  Radii now come from ``grid.crs.ellipsoid``, falling back to the body only if
+  the CRS carries no ellipsoid; ``body`` supplies only ``TargetName``.
+  Regression coverage in ``tests/test_body_figure.py::TestMappingPvlSidecar``
+  covers the ellipsoidal case too, so the sidecar tracks whatever figure the CRS
+  selects rather than pinning a second copy of the rule.
+
 - **Projected CRS no longer pairs planetocentric latitudes with the ographic
   ellipsoid** (#4). Every CRS csm2map built emitted
   ``+a=EquatorialRadius +b=PolarRadius`` — the ographic ellipsoid — while the
