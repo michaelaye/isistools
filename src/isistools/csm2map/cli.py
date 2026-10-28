@@ -123,6 +123,17 @@ def project(
         str,
         typer.Option("--interp", "-i", help="Interpolation: nearest, bilinear, bicubic."),
     ] = "bicubic",
+    nodata: Annotated[
+        Optional[float],
+        typer.Option(
+            "--nodata",
+            help="Value written for empty pixels and declared as the raster's "
+            "nodata. Default NaN, which rasterio already uses for ISIS "
+            "special pixels. "
+            "Pass 0.0 only if you know no valid pixel can be zero. "
+            "(Left as None here so this module keeps its numpy-free import.)",
+        ),
+    ] = None,
 ):
     """Map-project an ISIS cube using a CSM camera model.
 
@@ -178,6 +189,7 @@ def project(
         spice_source=spice_source,
         interpolation=interpolation,
         profile=profile,
+        nodata=nodata,
     )
 
 

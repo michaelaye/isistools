@@ -220,8 +220,7 @@ def resolve_tile_size(
             )
             if edge >= grid_h and edge >= grid_w:
                 console.print(
-                    "  [dim]auto tile covers full output → "
-                    "falling through to batch path[/dim]"
+                    "  [dim]auto tile covers full output → falling through to batch path[/dim]"
                 )
                 return None
             return edge
@@ -282,7 +281,7 @@ def project_tiled(
         "count": 1,
         "crs": grid.crs.to_wkt(),
         "transform": grid.transform,
-        "nodata": 0.0,
+        "nodata": float("nan"),
         "compress": "zstd",
         "zstd_level": 3,
         "num_threads": "ALL_CPUS",
@@ -297,16 +296,17 @@ def project_tiled(
                 h_t = min(tile_size, grid.height - row0)
                 w_t = min(tile_size, grid.width - col0)
                 coord_map = coordinate_map_for_window(state, row0, col0, h_t, w_t)
-                # fill_value=0.0 lets resample take its zero-transient
-                # in-place fast path (result *= valid). The output GeoTIFF
-                # nodata is also 0.0, so the DN value matches what the
-                # batch path writes (write_geotiff does np.where(isnan)
-                # to nodata=0.0 on its end).
+                # fill_value=NaN takes resample's non-zero branch (np.copyto
+                # where ~valid) rather than the zero-transient in-place
+                # multiply. Measured cost on this data: 0.6-0.9 % of runtime,
+                # against which 0.0 is a legal pixel value -- 0.25 % of the
+                # pixels cam2map calls valid on an MC20W set are exactly 0.0,
+                # and declaring 0.0 as nodata discards them.
                 tile = resample(
                     data,
                     coord_map,
                     interpolation=interpolation,
-                    fill_value=0.0,
+                    fill_value=float("nan"),
                 )
                 dst.write(tile, 1, window=Window(col0, row0, w_t, h_t))
                 console.print(
@@ -406,9 +406,7 @@ def csm2map_tiled(
         lat_range=lat_range,
         lon_range=lon_range,
     )
-    console.print(
-        f"  Output: {grid.width} x {grid.height} pixels, {grid.resolution:.2f} m/px"
-    )
+    console.print(f"  Output: {grid.width} x {grid.height} pixels, {grid.resolution:.2f} m/px")
 
     console.print("[bold]Building coarse state[/bold] (one CSM pass for all tiles)")
     state = compute_coarse_state(

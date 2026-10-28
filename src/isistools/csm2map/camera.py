@@ -127,6 +127,128 @@ class TargetBody:
         )
 
 
+@dataclass(frozen=True)
+class AlphaCube:
+    """The crop offset an ISIS cube records after ``crop``/``pad``/``enlarge``.
+
+    ISIS writes a ``Group = AlphaCube`` into any cube whose pixel grid is a
+    sub-window of a parent, holding the parent-image *edge* coordinates of the
+    window. ALE, however, builds its ISD from the cube's ``Core`` dimensions and
+    the instrument's SPICE, both of which describe the **parent**. The CSM model
+    it produces is therefore indexed in parent pixels, while csm2map applies it
+    to the crop's own pixel grid. Without a correction the two disagree by
+    exactly the crop offset.
+
+    Measured on ``G01_018621_1678_XI_12S339W`` (2026-09-30), projecting the same
+    cube cropped at three different lines and comparing the scene centre against
+    ``campt``:
+
+    ==========  ==================  =================
+    crop line   csm2map error       predicted offset
+    ==========  ==================  =================
+    2000        -11 878 m           1999 px x 5.96 m
+    8000        -47 683 m           7999 px x 5.96 m
+    20000       -119 217 m          19999 px x 5.96 m
+    ==========  ==================  =================
+
+    csm2map returned an identical scene centre for all three, i.e. it placed
+    every crop as though it began at line 1 of the parent.
+
+    Attributes
+    ----------
+    line_offset, sample_offset : float
+        Added to a crop pixel coordinate to get the parent coordinate, in the
+        CSM convention where the first pixel's centre is 0.5. Derived as
+        ``AlphaStartingLine - 0.5`` (the ISIS value is a leading edge).
+    lines, samples : int
+        The crop's own dimensions, so ``getImageSize`` describes the raster the
+        caller actually holds rather than the parent.
+    """
+
+    line_offset: float
+    sample_offset: float
+    lines: int
+    samples: int
+
+    @property
+    def is_identity(self) -> bool:
+        return self.line_offset == 0.0 and self.sample_offset == 0.0
+
+
+def read_alpha_cube(cube_path: str | Path) -> AlphaCube | None:
+    """Read a cube's ``AlphaCube`` group, or None if it is not a crop.
+
+    Returns None both when the group is absent (the common case: a cube that
+    was never cropped) and when it is present but describes no shift, so
+    callers can treat None as "index the model directly".
+    """
+    from isistools.io.cubes import read_label
+
+    try:
+        label = read_label(cube_path)
+        cube = label["IsisCube"]
+        alpha = cube["AlphaCube"]
+        dims = cube["Core"]["Dimensions"]
+    except (KeyError, FileNotFoundError, OSError):
+        return None
+
+    try:
+        # ISIS records leading edges; CSM puts the first pixel centre at 0.5.
+        ac = AlphaCube(
+            line_offset=float(alpha["AlphaStartingLine"]) - 0.5,
+            sample_offset=float(alpha["AlphaStartingSample"]) - 0.5,
+            lines=int(dims["Lines"]),
+            samples=int(dims["Samples"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    return None if ac.is_identity else ac
+
+
+class CroppedRasterGM:
+    """A CSM model indexed in a crop's pixels instead of its parent's.
+
+    Delegates everything to the wrapped ``csmapi.RasterGM`` and rewrites only
+    the three calls that carry image coordinates. The wrapped model keeps the
+    parent's geometry and, critically for a line-scan sensor, the parent's
+    line-to-ephemeris-time mapping — a crop shifts *time* as well as position,
+    so rewriting the ISD's dimensions would be wrong.
+
+    Applied only when a cube actually carries a non-identity ``AlphaCube``, so
+    uncropped cubes keep the bare model and pay nothing.
+    """
+
+    def __init__(self, model: "csmapi.RasterGM", alpha: AlphaCube) -> None:
+        self._model = model
+        self._alpha = alpha
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._model, name)
+
+    def getImageSize(self) -> Any:  # noqa: N802 - mirrors the csmapi name
+        import csmapi
+
+        return csmapi.ImageVector(self._alpha.lines, self._alpha.samples)
+
+    def groundToImage(self, *args: Any, **kwargs: Any) -> Any:  # noqa: N802
+        import csmapi
+
+        ip = self._model.groundToImage(*args, **kwargs)
+        return csmapi.ImageCoord(
+            ip.line - self._alpha.line_offset,
+            ip.samp - self._alpha.sample_offset,
+        )
+
+    def imageToGround(self, image_pt: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: N802
+        import csmapi
+
+        shifted = csmapi.ImageCoord(
+            image_pt.line + self._alpha.line_offset,
+            image_pt.samp + self._alpha.sample_offset,
+        )
+        return self._model.imageToGround(shifted, *args, **kwargs)
+
+
 def _ensure_csm_plugin_loaded() -> None:
     """Load the usgscsm CSM plugin via ctypes.
 
@@ -294,6 +416,13 @@ def load_camera(
             if plugin.canModelBeConstructedFromISD(isd, model_name, warnings):
                 model = plugin.constructModelFromISD(isd, model_name)
                 if isinstance(model, csmapi.RasterGM):
+                    # ALE builds the ISD from the cube's Core dimensions and
+                    # its SPICE, both of which describe the PARENT image. If
+                    # this cube is a crop, index the model in the crop's own
+                    # pixels; otherwise hand back the bare model unchanged.
+                    alpha = read_alpha_cube(cube_path)
+                    if alpha is not None:
+                        return CroppedRasterGM(model, alpha), body
                     return model, body
 
     msg = f"No CSM plugin could construct a model from {cube_path}"

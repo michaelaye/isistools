@@ -63,6 +63,7 @@ def csm2map(
     interpolation: Interpolation = Interpolation.BICUBIC,
     # Output
     output_format: Literal["geotiff", "cube"] = "geotiff",
+    nodata: float | None = None,
     # Profiling
     profile: bool = False,
 ) -> Path:
@@ -126,6 +127,11 @@ def csm2map(
         Pixel interpolation method.
     output_format : str
         Output format ("geotiff" or "cube").
+    nodata : float, optional
+        Value written for pixels with no data, and declared as the raster's
+        nodata. Default NaN, which rasterio already uses when surfacing ISIS
+        special pixels. It was ``0.0``, a legal pixel value, which made real
+        data indistinguishable from empty.
 
     Returns
     -------
@@ -133,6 +139,10 @@ def csm2map(
     """
     input_cube = Path(input_cube)
     output_path = Path(output_path)
+    # Resolved here rather than in the signature so the CLI module can stay
+    # numpy-free: it imports lazily inside its commands to keep startup light.
+    if nodata is None:
+        nodata = float("nan")
 
     timings: dict[str, float] | None = {} if profile else None
     t_total0 = time.perf_counter() if profile else None
@@ -273,7 +283,10 @@ def csm2map(
     console.print(f"[bold]Writing[/bold] {output_path.name}")
     with _stage(timings, "write_output"):
         if output_format == "geotiff":
-            result = write_geotiff(output_path, projected, grid, nodata=0.0)
+            # The batch path already resamples with fill_value=np.nan, so this
+            # only changes which constant those NaNs become on write: no extra
+            # pass over the data, no measurable cost.
+            result = write_geotiff(output_path, projected, grid, nodata=nodata)
             pvl_path = write_mapping_pvl(output_path, grid, body)
             console.print(f"  Mapping sidecar: {pvl_path.name}")
         else:
